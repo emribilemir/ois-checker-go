@@ -10,7 +10,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o notbot ./cmd/bot
 # --- Stage 2: Runtime ---
 FROM alpine:3.20
 
-RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng tzdata
+
+ENV TZ="Europe/Istanbul"
 
 # Türkçe karakter yoksa eng yeterli, varsa:
 # RUN apk add --no-cache tesseract-ocr-data-tur
