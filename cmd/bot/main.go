@@ -36,6 +36,22 @@ func main() {
 		log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
 	}
 
+	// Render üzerindeki bedava "Web Service" planında botun kapanmasını engellemek için:
+	// Render, uygulamanın ayaklanıp bir portu dinlemesini bekler.
+	// Buraya sahte bir sunucu açıyoruz. Eğer dışarıdan bir ping gelirse '200 OK' döner.
+	// Böylece UptimeRobot gibi servislerle 5 dakikada bir ping atıp 7/24 ücretsiz uyandırabilirsin.
+	if port := os.Getenv("PORT"); port != "" {
+		go func() {
+			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte("OIS Bot is fully awake and running!"))
+			})
+			log.Printf("Render Web Service için PORT %s dinleniyor...", port)
+			if err := http.ListenAndServe(":"+port, nil); err != nil {
+				log.Printf("HTTP Sunucu hatası: %v", err)
+			}
+		}()
+	}
+
 	// Telegram Callback dinleyicisini arkaplanda başlat
 	go notify.StartPoller(cfg.TelegramToken, func(cmd, chatID, cbqID string) {
 		// Sadece yapılandırılmış yöneticiye cevap ver
