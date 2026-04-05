@@ -116,7 +116,6 @@ func main() {
 					notify.AnswerCallback(cfg.TelegramToken, cbqID, "Notların hazır!")
 				}
 				var msgBuilder strings.Builder
-				msgBuilder.WriteString("📖 *O Anki Hafızadaki Notların:*\n")
 
 				for _, c := range courses {
 					msgBuilder.WriteString(fmt.Sprintf("\n📚 *%s*\n", c.Name))

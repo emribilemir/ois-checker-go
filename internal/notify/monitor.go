@@ -20,7 +20,6 @@ func GetSystemStats(interval time.Duration) string {
 		"• *Aktif Goroutine:* %d\n"+
 		"• *Kullanılan Bellek (Alloc):* %.2f MB\n"+
 		"• *İşletim Sisteminden Ayrılan (Sys):* %.2f MB\n"+
-		"• *Toplam GC Döngüsü:* %d\n\n"+
-		"_(Bu veriler botun anlık memory leak durumunu gösterir)_",
+		"• *Toplam GC Döngüsü:* %d",
 		interval.Minutes(), routines, allocMB, sysMB, m.NumGC)
 }
