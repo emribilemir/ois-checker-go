@@ -26,6 +26,7 @@ var (
 )
 
 func main() {
+	log.SetOutput(os.Stdout)
 	cfg := config.Load()
 	client := session.New(cfg.UserAgent)
 
@@ -205,6 +206,7 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 	// Login (max 15 CAPTCHA denemesi)
 	var loginOK bool
 	for attempt := 0; attempt < 15; attempt++ {
+		log.Printf("OIS'e giriş deneniyor (Deneme %d/15)...", attempt+1)
 		result, err := auth.Login(client, cfg)
 		if err != nil {
 			log.Printf("login hata: %v", err)
