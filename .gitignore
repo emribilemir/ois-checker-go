@@ -1,0 +1,21 @@
+# Binaries
+notbot
+*.exe
+
+# Environment
+.env
+
+# State
+data/
+data_debug/
+*.json
+logs.txt
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
