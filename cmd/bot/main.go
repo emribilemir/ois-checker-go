@@ -17,12 +17,16 @@ import (
 	"notbot/internal/notify"
 	"notbot/internal/scraper"
 	"notbot/internal/session"
+	"notbot/internal/dersecme"
 )
 
 var (
 	cacheMu       sync.RWMutex
 	cachedCourses []scraper.Course
 	isPaused      bool
+	
+	isDersSecmeActive bool
+	dersSecmeNotified bool
 )
 
 func main() {
@@ -33,7 +37,7 @@ func main() {
 	log.Printf("Bot başladı. Kontrol aralığı: %s", cfg.PollInterval)
 
 	msgStr := fmt.Sprintf("🤖 OIS Checker Bot Başladı!\n⏱️ Kontrol Aralığı: %.0f dakika\nNotlarını kontrol etmeye başlıyorum...", cfg.PollInterval.Minutes())
-	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgStr); err != nil {
+	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgStr, isPaused, isDersSecmeActive); err != nil {
 		log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
 	}
 
@@ -62,7 +66,7 @@ func main() {
 
 		switch cmd {
 		case "/start":
-			notify.SendMenu(cfg.TelegramToken, chatID, fmt.Sprintf("👋 Hoşgeldin! Aşağıdaki menüden istediklerine direkt ulaşabilirsin:\n_(Şu anki rutin kontrol aralığı: %.0f dakikada bir)_", cfg.PollInterval.Minutes()))
+			notify.SendMenu(cfg.TelegramToken, chatID, fmt.Sprintf("👋 Hoşgeldin! Aşağıdaki menüden istediklerine direkt ulaşabilirsin:\n_(Şu anki rutin kontrol aralığı: %.0f dakikada bir)_", cfg.PollInterval.Minutes()), isPaused, isDersSecmeActive)
 		
 		case "cmd_pause":
 			cacheMu.Lock()
@@ -71,7 +75,7 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tarama duraklatıldı.")
 			}
-			notify.SendTelegram(cfg.TelegramToken, chatID, "⏸ *Bot Duraklatıldı.*\nArkaplanda not kontrolü yapılmayacak. Yeniden başlatmak için menüden Devam Et tuşuna basabilirsin.")
+			notify.SendMenu(cfg.TelegramToken, chatID, "⏸ *Bot Duraklatıldı.*\nArkaplanda not kontrolü yapılmayacak. Yeniden başlatmak için menüden Devam Et tuşuna basabilirsin.", true, isDersSecmeActive)
 		
 		case "cmd_resume":
 			cacheMu.Lock()
@@ -80,8 +84,23 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tarama sürdürülüyor.")
 			}
-			notify.SendTelegram(cfg.TelegramToken, chatID, "▶️ *Bot Devam Ediyor.*\nArkaplanda OIS kontrol döngüsü aktif edildi.")
+			notify.SendMenu(cfg.TelegramToken, chatID, "▶️ *Bot Devam Ediyor.*\nArkaplanda OIS kontrol döngüsü aktif edildi.", false, isDersSecmeActive)
 		
+		case "cmd_ders_secme_on":
+			isDersSecmeActive = true
+			if cbqID != "" {
+				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Ders seçme takibi AKTİF!")
+			}
+			notify.SendMenu(cfg.TelegramToken, chatID, "📋 *Ders Seçme Takibi Aktif Edildi.*\nDers kayıt süreci başladığında anında haber vereceğim.", isPaused, true)
+
+		case "cmd_ders_secme_off":
+			isDersSecmeActive = false
+			dersSecmeNotified = false // kapatılınca durumu da sıfırla
+			if cbqID != "" {
+				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Ders seçme takibi KAPATILDI.")
+			}
+			notify.SendMenu(cfg.TelegramToken, chatID, "🚫 *Ders Seçme Takibi Kapatıldı.*", isPaused, false)
+
 		case "cmd_restart":
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Sistem baştan başlatılıyor!")
@@ -100,7 +119,7 @@ func main() {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Sistem bilgileri getiriliyor...")
 			}
 			stats := notify.GetSystemStats(cfg.PollInterval)
-			notify.SendMenu(cfg.TelegramToken, chatID, stats)
+			notify.SendMenu(cfg.TelegramToken, chatID, stats, isPaused, isDersSecmeActive)
 		case "cmd_grades":
 			cacheMu.RLock()
 			courses := cachedCourses
@@ -127,7 +146,7 @@ func main() {
 						msgBuilder.WriteString(fmt.Sprintf("   • %s%s: *%s*\n", comp.Name, weight, comp.Score))
 					}
 				}
-				notify.SendMenu(cfg.TelegramToken, chatID, msgBuilder.String())
+				notify.SendMenu(cfg.TelegramToken, chatID, msgBuilder.String(), isPaused, isDersSecmeActive)
 			}
 		}
 	})
@@ -196,7 +215,7 @@ func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
 
 	msgBuilder.WriteString("\n_(Sistem takibe devam ediyor...)_")
 	
-	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgBuilder.String()); err != nil {
+	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgBuilder.String(), isPaused, isDersSecmeActive); err != nil {
 		log.Printf("İlk not durumu Telegram gönderim hatası: %v", err)
 	}
 }
@@ -245,10 +264,32 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 
 	// Bildirim
 	msg := diff.FormatMessage(changes)
-	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
+	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msg, isPaused, isDersSecmeActive); err != nil {
 		log.Printf("telegram hata: %v", err)
-		return courses, true
+	} else {
+		log.Printf("bildirim gönderildi: %d değişiklik", len(changes))
 	}
-	log.Printf("bildirim gönderildi: %d değişiklik", len(changes))
+
+	// Ders secme entegrasyonu (başarılı login sonrası)
+	runDersSecmeCheck(client, cfg)
+
 	return courses, true
+}
+
+func runDersSecmeCheck(client *http.Client, cfg *config.Config) {
+	if !isDersSecmeActive {
+		return
+	}
+
+	found, keyword, err := dersecme.Check(client, cfg)
+	if err != nil {
+		log.Printf("ders seçme kontrol hata: %v", err)
+	} else if found && !dersSecmeNotified {
+		msg := fmt.Sprintf("🚨 *DERS SEÇME AKTİF!*\n\nOIS menüsünde \"%s\" ifadesi tespit edildi!\nHemen giriş yap: %s\n\n⏰ Tespit: %s",
+			keyword, cfg.UniversityURL, time.Now().Format("02/01/2006 15:04:05"))
+		notify.SendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg)
+		dersSecmeNotified = true
+	} else if !found {
+		dersSecmeNotified = false
+	}
 }

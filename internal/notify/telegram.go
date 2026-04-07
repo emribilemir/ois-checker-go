@@ -27,13 +27,30 @@ func SendTelegram(token, chatID, message string) error {
 	return nil
 }
 
-func SendMenu(token, chatID, message string) error {
+func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive bool) error {
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	kb := `{"inline_keyboard": [
+	
+	// Dinamik butonlar
+	pauseText := "⏸ Taramayı Durdur"
+	pauseCmd := "cmd_pause"
+	if isPaused {
+		pauseText = "▶️ Taramayı Başlat"
+		pauseCmd = "cmd_resume"
+	}
+
+	dersSecmeText := "📋 Ders Seçme Takibi Aç"
+	dersSecmeCmd := "cmd_ders_secme_on"
+	if isDersSecmeActive {
+		dersSecmeText = "🚫 Ders Seçme Takibi Kapat"
+		dersSecmeCmd = "cmd_ders_secme_off"
+	}
+
+	kb := fmt.Sprintf(`{"inline_keyboard": [
 		[{"text": "📖 Anlık Notlar", "callback_data": "cmd_grades"}, {"text": "📊 Sistem Durumu", "callback_data": "cmd_stats"}],
-		[{"text": "⏸ Taramayı Durdur", "callback_data": "cmd_pause"}, {"text": "▶️ Devam Et", "callback_data": "cmd_resume"}],
-		[{"text": "🔄 Botu Yeniden Başlat (Restart)", "callback_data": "cmd_restart"}]
-	]}`
+		[{"text": "%s", "callback_data": "%s"}],
+		[{"text": "%s", "callback_data": "%s"}],
+		[{"text": "🔄 Botu Yeniden Başlat", "callback_data": "cmd_restart"}]
+	]}`, dersSecmeText, dersSecmeCmd, pauseText, pauseCmd)
 
 	resp, err := http.PostForm(endpoint, url.Values{
 		"chat_id":      {chatID},
