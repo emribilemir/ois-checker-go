@@ -2,6 +2,8 @@
 notbot
 *.exe
 
+# Tests
+test_ocr.go
 # Environment
 .env
 
@@ -19,3 +21,4 @@ vendor/
 .vscode/
 *.swp
 *.swo
+    

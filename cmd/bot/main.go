@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"notbot/config"
@@ -24,9 +25,6 @@ var (
 	cacheMu       sync.RWMutex
 	cachedCourses []scraper.Course
 	isPaused      bool
-	
-	isDersSecmeActive bool
-	dersSecmeNotified bool
 )
 
 func main() {
@@ -119,7 +117,7 @@ func main() {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Sistem bilgileri getiriliyor...")
 			}
 			stats := notify.GetSystemStats(cfg.PollInterval)
-			notify.SendMenu(cfg.TelegramToken, chatID, stats, isPaused, isDersSecmeActive)
+			notify.SendMenu(cfg.TelegramToken, chatID, stats)
 		case "cmd_grades":
 			cacheMu.RLock()
 			courses := cachedCourses
@@ -221,6 +219,7 @@ func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
 }
 
 func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
+	atomic.AddInt64(&checkCount, 1)
 	// Login (max 15 CAPTCHA denemesi)
 	var loginOK bool
 	for attempt := 0; attempt < 15; attempt++ {

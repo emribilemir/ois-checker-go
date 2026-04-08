@@ -7,7 +7,7 @@ import (
 )
 
 // GetSystemStats reads Go runtime memory statistics to help identify memory leaks or high allocations.
-func GetSystemStats(interval time.Duration) string {
+func GetSystemStats(interval time.Duration, checkCount int64) string {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -17,9 +17,10 @@ func GetSystemStats(interval time.Duration) string {
 
 	return fmt.Sprintf("📊 *Sistem Durumu*\n\n"+
 		"• *Kontrol Aralığı:* %.0f Dakika\n"+
+		"• *Toplam Kontrol Sayısı:* %d\n"+
 		"• *Aktif Goroutine:* %d\n"+
 		"• *Kullanılan Bellek (Alloc):* %.2f MB\n"+
 		"• *İşletim Sisteminden Ayrılan (Sys):* %.2f MB\n"+
 		"• *Toplam GC Döngüsü:* %d",
-		interval.Minutes(), routines, allocMB, sysMB, m.NumGC)
+		interval.Minutes(), checkCount, routines, allocMB, sysMB, m.NumGC)
 }
