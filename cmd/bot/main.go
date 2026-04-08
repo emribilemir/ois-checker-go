@@ -22,9 +22,12 @@ import (
 )
 
 var (
-	cacheMu       sync.RWMutex
-	cachedCourses []scraper.Course
-	isPaused      bool
+	cacheMu           sync.RWMutex
+	cachedCourses     []scraper.Course
+	isPaused          bool
+	isDersSecmeActive bool
+	dersSecmeNotified bool
+	checkCount        int64
 )
 
 func main() {
@@ -116,8 +119,8 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Sistem bilgileri getiriliyor...")
 			}
-			stats := notify.GetSystemStats(cfg.PollInterval)
-			notify.SendMenu(cfg.TelegramToken, chatID, stats)
+			stats := notify.GetSystemStats(cfg.PollInterval, atomic.LoadInt64(&checkCount))
+			notify.SendMenu(cfg.TelegramToken, chatID, stats, isPaused, isDersSecmeActive)
 		case "cmd_grades":
 			cacheMu.RLock()
 			courses := cachedCourses

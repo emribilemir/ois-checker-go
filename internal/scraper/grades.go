@@ -26,7 +26,7 @@ type Course struct {
 	Components []Component `json:"components"`
 }
 
-// FetchGrades Atlas OIS'ten sınav sonuçlarını çeker.
+// FetchGrades OIS'ten sınav sonuçlarını çeker.
 func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	gradesURL := cfg.UniversityURL + "/ogrenciler/belge/ogrsinavsonuc"
 	req, _ := http.NewRequest("GET", gradesURL, nil)
@@ -48,7 +48,7 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	return parseGrades(body), nil
 }
 
-// parseGrades Atlas OIS sınav sonuçları sayfasını parse eder.
+// parseGrades OIS sınav sonuçları sayfasını parse eder.
 //
 // Sayfa yapısı:
 //   <table class="a4"> (son tablo — notlar)
