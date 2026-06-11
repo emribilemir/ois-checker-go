@@ -21,9 +21,11 @@ type Component struct {
 
 // Course bir ders ve ona ait sınav bileşenlerini tutar.
 type Course struct {
-	Code       string      `json:"code"`
-	Name       string      `json:"name"`
-	Components []Component `json:"components"`
+	Code         string      `json:"code"`
+	Name         string      `json:"name"`
+	LetterGrade  string      `json:"letter_grade,omitempty"`
+	SuccessScore string      `json:"success_score,omitempty"`
+	Components   []Component `json:"components"`
 }
 
 // FetchGrades OIS'ten sınav sonuçlarını çeker.
@@ -51,21 +53,22 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 // parseGrades OIS sınav sonuçları sayfasını parse eder.
 //
 // Sayfa yapısı:
-//   <table class="a4"> (son tablo — notlar)
-//     <tr>
-//       <th class="belge_satir">Etki Oranı</th>
-//       <th class="belge_satir">CODE - NAME <h3> </h3></th>
-//       <th class="belge_satir">Puan</th>
-//       <th class="belge_satir">Açıklanma Tarihi</th>
-//     </tr>
-//     <!-- notlar açıklandığında aşağıdaki satırlar eklenir -->
-//     <tr>
-//       <td>%40</td>
-//       <td>Ara Sınav</td>
-//       <td>85.0</td>
-//       <td>15/03/2026</td>
-//     </tr>
-//   </table>
+//
+//	<table class="a4"> (son tablo — notlar)
+//	  <tr>
+//	    <th class="belge_satir">Etki Oranı</th>
+//	    <th class="belge_satir">CODE - NAME <h3> </h3></th>
+//	    <th class="belge_satir">Puan</th>
+//	    <th class="belge_satir">Açıklanma Tarihi</th>
+//	  </tr>
+//	  <!-- notlar açıklandığında aşağıdaki satırlar eklenir -->
+//	  <tr>
+//	    <td>%40</td>
+//	    <td>Ara Sınav</td>
+//	    <td>85.0</td>
+//	    <td>15/03/2026</td>
+//	  </tr>
+//	</table>
 func parseGrades(body []byte) []Course {
 	doc, _ := html.Parse(strings.NewReader(string(body)))
 
@@ -95,16 +98,21 @@ func parseGrades(body []byte) []Course {
 			// Bu bir ders başlık satırı
 			// İkinci <th> ders kodunu ve adını içerir: "1410121006 - Matematik II"
 			courseText := textContent(ths[1])
-			code, name := parseCourseText(courseText)
+			code, name, letterGrade, successScore := parseCourseText(courseText)
 
 			if code != "" || name != "" {
-				courses = append(courses, Course{Code: code, Name: name})
+				courses = append(courses, Course{
+					Code:         code,
+					Name:         name,
+					LetterGrade:  letterGrade,
+					SuccessScore: successScore,
+				})
 				current = &courses[len(courses)-1]
 			}
 		} else if len(tds) >= 4 && current != nil {
 			// Bu bir not satırı (sınav bileşeni)
 			comp := Component{
-				Weight: strings.TrimSpace(textContent(tds[0])),
+				Weight: NormalizeWeight(textContent(tds[0])),
 				Name:   strings.TrimSpace(textContent(tds[1])),
 				Score:  strings.TrimSpace(textContent(tds[2])),
 				Date:   strings.TrimSpace(textContent(tds[3])),
@@ -119,13 +127,75 @@ func parseGrades(body []byte) []Course {
 }
 
 // parseCourseText "1410121006 - Matematik II" formatındaki metni parse eder.
-func parseCourseText(text string) (code, name string) {
+func parseCourseText(text string) (code, name, letterGrade, successScore string) {
 	text = strings.TrimSpace(text)
 	idx := strings.Index(text, " - ")
 	if idx > 0 {
-		return strings.TrimSpace(text[:idx]), strings.TrimSpace(text[idx+3:])
+		code = strings.TrimSpace(text[:idx])
+		name = strings.TrimSpace(text[idx+3:])
+	} else {
+		name = text
 	}
-	return "", text
+
+	name, letterGrade, successScore = splitGradeSummary(name)
+	return code, name, letterGrade, successScore
+}
+
+func splitGradeSummary(text string) (name, letterGrade, successScore string) {
+	const marker = "Başarı Puanı:"
+
+	text = strings.TrimSpace(text)
+	idx := strings.Index(text, marker)
+	if idx < 0 {
+		return text, "", ""
+	}
+
+	before := strings.TrimSpace(text[:idx])
+	if strings.HasSuffix(before, " -") {
+		before = strings.TrimSpace(strings.TrimSuffix(before, "-"))
+	}
+	after := strings.TrimSpace(text[idx+len(marker):])
+	fields := strings.Fields(before)
+	if len(fields) == 0 {
+		return text, "", ""
+	}
+
+	letterGrade = fields[len(fields)-1]
+	name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(before[:strings.LastIndex(before, letterGrade)]), "-"))
+	if name == "" {
+		return text, "", ""
+	}
+
+	return name, letterGrade, after
+}
+
+func (c Course) DisplayName() string {
+	if c.LetterGrade == "" && c.SuccessScore == "" {
+		return c.Name
+	}
+	if c.LetterGrade == "" {
+		return fmt.Sprintf("%s (Başarı Puanı: %s)", c.Name, c.SuccessScore)
+	}
+	if c.SuccessScore == "" {
+		return fmt.Sprintf("%s (%s)", c.Name, c.LetterGrade)
+	}
+	return fmt.Sprintf("%s (%s, Başarı Puanı: %s)", c.Name, c.LetterGrade, c.SuccessScore)
+}
+
+func NormalizeWeight(weight string) string {
+	weight = strings.TrimSpace(weight)
+	for len(weight) >= 2 && strings.HasPrefix(weight, "(") && strings.HasSuffix(weight, ")") {
+		weight = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(weight, "("), ")"))
+	}
+	return weight
+}
+
+func FormatWeight(weight string) string {
+	weight = NormalizeWeight(weight)
+	if weight == "" {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", weight)
 }
 
 // findTables <table class="a4"> elementlerini bulur.
@@ -169,7 +239,13 @@ func textContent(n *html.Node) string {
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.TextNode {
-			b.WriteString(strings.TrimSpace(n.Data))
+			text := strings.TrimSpace(n.Data)
+			if text != "" {
+				if b.Len() > 0 {
+					b.WriteString(" ")
+				}
+				b.WriteString(text)
+			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)

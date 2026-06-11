@@ -14,11 +14,11 @@ import (
 
 	"notbot/config"
 	"notbot/internal/auth"
+	"notbot/internal/dersecme"
 	"notbot/internal/diff"
 	"notbot/internal/notify"
 	"notbot/internal/scraper"
 	"notbot/internal/session"
-	"notbot/internal/dersecme"
 )
 
 var (
@@ -68,7 +68,7 @@ func main() {
 		switch cmd {
 		case "/start":
 			notify.SendMenu(cfg.TelegramToken, chatID, fmt.Sprintf("👋 Hoşgeldin! Aşağıdaki menüden istediklerine direkt ulaşabilirsin:\n_(Şu anki rutin kontrol aralığı: %.0f dakikada bir)_", cfg.PollInterval.Minutes()), isPaused, isDersSecmeActive)
-		
+
 		case "cmd_pause":
 			cacheMu.Lock()
 			isPaused = true
@@ -77,7 +77,7 @@ func main() {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tarama duraklatıldı.")
 			}
 			notify.SendMenu(cfg.TelegramToken, chatID, "⏸ *Bot Duraklatıldı.*\nArkaplanda not kontrolü yapılmayacak. Yeniden başlatmak için menüden Devam Et tuşuna basabilirsin.", true, isDersSecmeActive)
-		
+
 		case "cmd_resume":
 			cacheMu.Lock()
 			isPaused = false
@@ -86,7 +86,7 @@ func main() {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tarama sürdürülüyor.")
 			}
 			notify.SendMenu(cfg.TelegramToken, chatID, "▶️ *Bot Devam Ediyor.*\nArkaplanda OIS kontrol döngüsü aktif edildi.", false, isDersSecmeActive)
-		
+
 		case "cmd_ders_secme_on":
 			isDersSecmeActive = true
 			if cbqID != "" {
@@ -108,7 +108,7 @@ func main() {
 			}
 			notify.SendTelegram(cfg.TelegramToken, chatID, "🔄 *Sistem Kapatılıp Yeniden Başlatılıyor...*")
 			// Exit komutunu asenkron yapıp 3 saniye bekletiyoruz ki
-			// Telegram'a offset UpdateID bildirimi (Ack) iletilebilsin. 
+			// Telegram'a offset UpdateID bildirimi (Ack) iletilebilsin.
 			// Aksi takdirde sonsuz yeniden başlama döngüsüne (Restart Loop) gireriz.
 			go func() {
 				time.Sleep(3 * time.Second)
@@ -138,11 +138,11 @@ func main() {
 				var msgBuilder strings.Builder
 
 				for _, c := range courses {
-					msgBuilder.WriteString(fmt.Sprintf("\n📚 *%s*\n", c.Name))
+					msgBuilder.WriteString(fmt.Sprintf("\n📚 *%s*\n", c.DisplayName()))
 					for _, comp := range c.Components {
 						weight := ""
 						if comp.Weight != "" {
-							weight = fmt.Sprintf(" (%s)", comp.Weight)
+							weight = fmt.Sprintf(" %s", scraper.FormatWeight(comp.Weight))
 						}
 						msgBuilder.WriteString(fmt.Sprintf("   • %s%s: *%s*\n", comp.Name, weight, comp.Score))
 					}
@@ -191,8 +191,8 @@ func main() {
 			}
 		}
 
-		// Her kontrol bittikten sonra RAM'deki çöpü (Garbage Collector) 
-		// agresif olarak temizleyip işletim sistemine iade et 
+		// Her kontrol bittikten sonra RAM'deki çöpü (Garbage Collector)
+		// agresif olarak temizleyip işletim sistemine iade et
 		// (Memory Leak algısını önlemek için)
 		runtime.GC()
 		debug.FreeOSMemory()
@@ -204,18 +204,18 @@ func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
 	msgBuilder.WriteString("✅ OIS'e başarıyla giriş yapıldı!\n\n*Mevcut Notların:*\n")
 
 	for _, c := range courses {
-		msgBuilder.WriteString(fmt.Sprintf("\n📚 *%s*\n", c.Name))
+		msgBuilder.WriteString(fmt.Sprintf("\n📚 *%s*\n", c.DisplayName()))
 		for _, comp := range c.Components {
 			weight := ""
 			if comp.Weight != "" {
-				weight = fmt.Sprintf(" (%s)", comp.Weight)
+				weight = fmt.Sprintf(" %s", scraper.FormatWeight(comp.Weight))
 			}
 			msgBuilder.WriteString(fmt.Sprintf("   • %s%s: *%s*\n", comp.Name, weight, comp.Score))
 		}
 	}
 
 	msgBuilder.WriteString("\n_(Sistem takibe devam ediyor...)_")
-	
+
 	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgBuilder.String(), isPaused, isDersSecmeActive); err != nil {
 		log.Printf("İlk not durumu Telegram gönderim hatası: %v", err)
 	}

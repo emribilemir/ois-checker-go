@@ -57,7 +57,7 @@ func Check(courses []scraper.Course, stateFile string) (changed bool, changes []
 					changes = append(changes, Change{
 						Type:       "new_score",
 						CourseCode: course.Code,
-						CourseName: course.Name,
+						CourseName: course.DisplayName(),
 						Component:  comp.Name,
 						Weight:     comp.Weight,
 						NewScore:   comp.Score,
@@ -68,48 +68,13 @@ func Check(courses []scraper.Course, stateFile string) (changed bool, changes []
 				changes = append(changes, Change{
 					Type:       "new_course",
 					CourseCode: course.Code,
-					CourseName: course.Name,
+					CourseName: course.DisplayName(),
 				})
 			}
 			continue
 		}
 
-		// Önceki bileşenleri map'le
-		prevCompMap := make(map[string]scraper.Component)
-		for _, comp := range prevCourse.Components {
-			key := comp.Name + "|" + comp.Weight
-			prevCompMap[key] = comp
-		}
-
-		for _, comp := range course.Components {
-			key := comp.Name + "|" + comp.Weight
-			prevComp, ok := prevCompMap[key]
-
-			if !ok {
-				// Yeni bileşen (yeni sınav notu)
-				changes = append(changes, Change{
-					Type:       "new_score",
-					CourseCode: course.Code,
-					CourseName: course.Name,
-					Component:  comp.Name,
-					Weight:     comp.Weight,
-					NewScore:   comp.Score,
-					Date:       comp.Date,
-				})
-			} else if prevComp.Score != comp.Score {
-				// Not değişti
-				changes = append(changes, Change{
-					Type:       "score_change",
-					CourseCode: course.Code,
-					CourseName: course.Name,
-					Component:  comp.Name,
-					Weight:     comp.Weight,
-					OldScore:   prevComp.Score,
-					NewScore:   comp.Score,
-					Date:       comp.Date,
-				})
-			}
-		}
+		changes = append(changes, compareComponents(course, prevCourse.Components)...)
 	}
 
 	_ = saveState(stateFile, State{Hash: current, Courses: courses})
@@ -124,6 +89,108 @@ func Check(courses []scraper.Course, stateFile string) (changed bool, changes []
 func hashCourses(courses []scraper.Course) string {
 	b, _ := json.Marshal(courses)
 	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+type componentSlot struct {
+	comp scraper.Component
+	used bool
+}
+
+func compareComponents(course scraper.Course, prevComponents []scraper.Component) []Change {
+	prevGroups := groupComponents(prevComponents)
+	currentGroups := groupComponents(course.Components)
+
+	var changes []Change
+	for _, baseKey := range componentGroupOrder(course.Components) {
+		prevSlots := prevGroups[baseKey]
+		currentSlots := currentGroups[baseKey]
+		currentUsed := make([]bool, len(currentSlots))
+
+		// Önce aynı skorları eşleştir: OIS aynı isim/ağırlıktaki satırları farklı
+		// sırada döndürürse sahte değişiklik üretmeyelim.
+		for currentIndex, current := range currentSlots {
+			for prevIndex := range prevSlots {
+				if prevSlots[prevIndex].used {
+					continue
+				}
+				if prevSlots[prevIndex].comp.Score == current.comp.Score {
+					prevSlots[prevIndex].used = true
+					currentUsed[currentIndex] = true
+					break
+				}
+			}
+		}
+
+		for currentIndex, current := range currentSlots {
+			if currentUsed[currentIndex] {
+				continue
+			}
+
+			prevIndex := firstUnusedComponent(prevSlots)
+			if prevIndex < 0 {
+				changes = append(changes, Change{
+					Type:       "new_score",
+					CourseCode: course.Code,
+					CourseName: course.DisplayName(),
+					Component:  current.comp.Name,
+					Weight:     current.comp.Weight,
+					NewScore:   current.comp.Score,
+					Date:       current.comp.Date,
+				})
+				continue
+			}
+
+			prev := prevSlots[prevIndex]
+			prevSlots[prevIndex].used = true
+			changes = append(changes, Change{
+				Type:       "score_change",
+				CourseCode: course.Code,
+				CourseName: course.DisplayName(),
+				Component:  current.comp.Name,
+				Weight:     current.comp.Weight,
+				OldScore:   prev.comp.Score,
+				NewScore:   current.comp.Score,
+				Date:       current.comp.Date,
+			})
+		}
+	}
+	return changes
+}
+
+func groupComponents(components []scraper.Component) map[string][]componentSlot {
+	groups := make(map[string][]componentSlot)
+	for _, comp := range components {
+		key := componentBaseKey(comp)
+		groups[key] = append(groups[key], componentSlot{comp: comp})
+	}
+	return groups
+}
+
+func componentGroupOrder(components []scraper.Component) []string {
+	seen := make(map[string]bool)
+	var order []string
+	for _, comp := range components {
+		key := componentBaseKey(comp)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		order = append(order, key)
+	}
+	return order
+}
+
+func componentBaseKey(comp scraper.Component) string {
+	return comp.Name + "|" + scraper.NormalizeWeight(comp.Weight)
+}
+
+func firstUnusedComponent(slots []componentSlot) int {
+	for i, slot := range slots {
+		if !slot.used {
+			return i
+		}
+	}
+	return -1
 }
 
 func loadState(path string) (State, error) {
@@ -169,7 +236,7 @@ func FormatMessage(changes []Change) string {
 		for _, ch := range g.changes {
 			weight := ""
 			if ch.Weight != "" {
-				weight = " " + ch.Weight
+				weight = " " + scraper.FormatWeight(ch.Weight)
 			}
 
 			switch ch.Type {
