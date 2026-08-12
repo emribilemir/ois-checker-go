@@ -101,6 +101,13 @@ func searchKeywords(body []byte) (found bool, matchedKeyword string, err error) 
 	// Sayfadaki tüm aranabilir içeriği topla
 	allText := normalizeText(extractAllText(doc))
 
+	// Kalıcı menü linkleri "Ders Seçme" yazsa bile açık bir kapanış duyurusu
+	// varsa süreç aktif değildir. Kapanış sinyali sayfa genelinde önceliklidir.
+	if phrase, ok := firstInactivePhrase(allText); ok {
+		log.Printf("[dersecme] ⏸ Ders seçme kapalı görünüyor: %q", phrase)
+		return false, "", nil
+	}
+
 	for _, kw := range activeKeywords {
 		normalizedKeyword := normalizeText(kw)
 		for _, idx := range findAllIndexes(allText, normalizedKeyword) {
@@ -112,11 +119,6 @@ func searchKeywords(body []byte) (found bool, matchedKeyword string, err error) 
 			log.Printf("[dersecme] ✅ Aktif ders seçme sinyali bulundu: %q", kw)
 			return true, kw, nil
 		}
-	}
-
-	if phrase, ok := firstInactivePhrase(allText); ok {
-		log.Printf("[dersecme] ⏸ Ders seçme kapalı görünüyor: %q", phrase)
-		return false, "", nil
 	}
 
 	log.Println("[dersecme] ❌ Ders seçme ifadesi bulunamadı")

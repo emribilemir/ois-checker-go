@@ -1,6 +1,9 @@
 package dersecme
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSearchKeywordsIgnoresEndedCourseSelectionNotice(t *testing.T) {
 	body := []byte(`<font size="5" color="red">DEĞERLİ ÖĞRENCİMİZ, DERS SEÇİMLERİ SONA ERMİŞTİR, DERS SEÇME İŞLEMİ İÇİN DANIŞMANINIZLA İLETİŞİME GEÇİNİZ.</font>`)
@@ -11,6 +14,20 @@ func TestSearchKeywordsIgnoresEndedCourseSelectionNotice(t *testing.T) {
 	}
 	if found {
 		t.Fatalf("expected ended notice to be ignored, matched %q", keyword)
+	}
+}
+
+func TestSearchKeywordsEndedNoticeOverridesPersistentCourseSelectionMenuLink(t *testing.T) {
+	body := []byte(`<nav><a href="/ogrenciler/ders-secme">Ders Seçme</a></nav>` +
+		`<main>` + strings.Repeat("duyuru içeriği ", 40) +
+		`<strong>DEĞERLİ ÖĞRENCİMİZ, DERS SEÇİMLERİ SONA ERMİŞTİR.</strong></main>`)
+
+	found, keyword, err := searchKeywords(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatalf("expected the ended notice to override the persistent menu link, matched %q", keyword)
 	}
 }
 
