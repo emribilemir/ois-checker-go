@@ -9,6 +9,33 @@ import (
 	"notbot/internal/scraper"
 )
 
+func TestCheckRejectsEmptyCoursesWithoutOverwritingState(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	previous := []scraper.Course{{
+		Code: "101",
+		Name: "Test Dersi",
+		Components: []scraper.Component{{
+			Name:  "Final",
+			Score: "80",
+		}},
+	}}
+	if err := saveState(stateFile, State{Hash: hashCourses(previous), Courses: previous}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := Check(nil, stateFile); err == nil {
+		t.Fatal("expected empty courses to be rejected")
+	}
+
+	state, err := loadState(stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Courses) != 1 || state.Courses[0].Code != "101" {
+		t.Fatalf("previous state was overwritten: %+v", state.Courses)
+	}
+}
+
 func TestCheckDoesNotReportDuplicateComponentAsChanged(t *testing.T) {
 	courses := []scraper.Course{{
 		Code: "SEC101",

@@ -72,8 +72,8 @@ func Login(client *http.Client, cfg *config.Config) (LoginResult, error) {
 		return LoginResult{Reason: "ocr_fail"}, nil
 	}
 	log.Printf("[login] OCR sonuç: %q (len=%d)", captchaText, len(captchaText))
-	if len(captchaText) < 4 {
-		return LoginResult{Reason: "ocr_fail_short"}, nil
+	if !captcha.IsValid(captchaText) {
+		return LoginResult{Reason: "ocr_fail_length"}, nil
 	}
 
 	// 4. Login POST — gerçek login URL'ine gönder

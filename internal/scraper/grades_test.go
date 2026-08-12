@@ -1,6 +1,41 @@
 package scraper
 
-import "testing"
+import (
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"notbot/config"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func TestFetchGradesRejectsSuccessfulPageWithoutGradeTable(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": {"text/html; charset=utf-8"},
+			},
+			Body:    io.NopCloser(strings.NewReader(`<html><body><h1>Bakım çalışması</h1></body></html>`)),
+			Request: req,
+		}, nil
+	})}
+
+	courses, err := FetchGrades(client, &config.Config{
+		UniversityURL: "https://ois.example",
+		UserAgent:     "test-agent",
+	})
+
+	if err == nil {
+		t.Fatalf("expected an error for a page without a grade table, got courses=%v", courses)
+	}
+}
 
 func TestParseGradesSplitsCourseGradeSummaryAndNormalizesWeight(t *testing.T) {
 	html := []byte(`

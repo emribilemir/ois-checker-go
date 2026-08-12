@@ -29,3 +29,15 @@ If running locally (Windows or Linux), ensure `tesseract` is installed and mappe
 ```bash
 go run cmd/bot/main.go
 ```
+
+## Render
+
+Deploy this application as a Docker **Web Service**, not as a Cron Job. The bot
+is a continuous process and intentionally does not exit after a single check.
+
+- Set `DERS_SECME_ACTIVE=true` to enable course-selection tracking after every restart.
+- Set `POLL_INTERVAL_SECONDS=300` for five-minute OIS checks.
+- Use `/` as the health-check path.
+- Free Render web services still require an external HTTP request at least once
+  every 15 minutes to avoid idle spin-down. A 5-10 minute uptime check is suitable.
+- `/data/state.json` is ephemeral on a free instance and can be lost on restart.

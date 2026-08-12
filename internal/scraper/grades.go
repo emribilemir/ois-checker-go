@@ -40,14 +40,24 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 		return nil, fmt.Errorf("sinav sonuc GET: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("sinav sonuc GET: status=%d final=%s", resp.StatusCode, resp.Request.URL.String())
+	}
 
 	// Session expire tespiti
 	if strings.Contains(resp.Request.URL.Path, "login") || strings.Contains(resp.Request.URL.Path, "auth") {
 		return nil, fmt.Errorf("session_expired")
 	}
 
-	body, _ := io.ReadAll(resp.Body)
-	return parseGrades(body), nil
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("sinav sonuc body okuma: %w", err)
+	}
+	courses := parseGrades(body)
+	if len(courses) == 0 {
+		return nil, fmt.Errorf("sinav sonuc sayfasi ayrıştırılamadı: status=%d final=%s bytes=%d", resp.StatusCode, resp.Request.URL.String(), len(body))
+	}
+	return courses, nil
 }
 
 // parseGrades OIS sınav sonuçları sayfasını parse eder.

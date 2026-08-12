@@ -29,6 +29,9 @@ type Change struct {
 // Check önceki state ile karşılaştırır.
 // changed=true ise değişiklik listesi döner.
 func Check(courses []scraper.Course, stateFile string) (changed bool, changes []Change, err error) {
+	if len(courses) == 0 {
+		return false, nil, fmt.Errorf("boş ders listesi state'e yazılamaz")
+	}
 	current := hashCourses(courses)
 
 	prev, err := loadState(stateFile)

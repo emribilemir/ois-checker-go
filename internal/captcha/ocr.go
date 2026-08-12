@@ -167,3 +167,8 @@ func sanitize(s string) string {
 	}
 	return b.String()
 }
+
+// IsValid reports whether OCR output matches Atlas OIS's four-character CAPTCHA.
+func IsValid(text string) bool {
+	return len(text) == 4
+}

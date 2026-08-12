@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	UniversityURL  string
-	Username       string
-	Password       string
-	TelegramToken  string
-	TelegramChatID string
-	PollInterval   time.Duration
-	StateFile      string
-	UserAgent      string
+	UniversityURL   string
+	Username        string
+	Password        string
+	TelegramToken   string
+	TelegramChatID  string
+	PollInterval    time.Duration
+	StateFile       string
+	UserAgent       string
+	DersSecmeActive bool
 }
 
 func Load() *Config {
@@ -24,15 +25,20 @@ func Load() *Config {
 	if err != nil {
 		log.Fatal("POLL_INTERVAL_SECONDS geçersiz")
 	}
+	dersSecmeActive, err := strconv.ParseBool(getEnv("DERS_SECME_ACTIVE", "true"))
+	if err != nil {
+		log.Fatal("DERS_SECME_ACTIVE geçersiz")
+	}
 	return &Config{
-		UniversityURL:  mustGetEnv("UNIVERSITY_URL"),
-		Username:       mustGetEnv("UNIVERSITY_USER"),
-		Password:       mustGetEnv("UNIVERSITY_PASS"),
-		TelegramToken:  mustGetEnv("TELEGRAM_TOKEN"),
-		TelegramChatID: mustGetEnv("TELEGRAM_CHAT_ID"),
-		PollInterval:   time.Duration(intervalSec) * time.Second,
-		StateFile:      getEnv("STATE_FILE", "/data/state.json"),
-		UserAgent:      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		UniversityURL:   mustGetEnv("UNIVERSITY_URL"),
+		Username:        mustGetEnv("UNIVERSITY_USER"),
+		Password:        mustGetEnv("UNIVERSITY_PASS"),
+		TelegramToken:   mustGetEnv("TELEGRAM_TOKEN"),
+		TelegramChatID:  mustGetEnv("TELEGRAM_CHAT_ID"),
+		PollInterval:    time.Duration(intervalSec) * time.Second,
+		StateFile:       getEnv("STATE_FILE", "/data/state.json"),
+		UserAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		DersSecmeActive: dersSecmeActive,
 	}
 }
 
