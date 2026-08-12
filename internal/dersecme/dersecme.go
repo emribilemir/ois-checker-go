@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -85,9 +86,88 @@ func Check(client *http.Client, cfg *config.Config) (found bool, matchedKeyword 
 		return false, "", fmt.Errorf("body okuma: %w", err)
 	}
 
-	log.Printf("[dersecme] Sayfa çekildi: %d byte, URL=%s", len(body), resp.Request.URL.String())
+	log.Printf("[dersecme] Ana sayfa çekildi: %d byte, URL=%s", len(body), resp.Request.URL.String())
+
+	links, err := findCourseSelectionLinks(body, resp.Request.URL)
+	if err != nil {
+		return false, "", err
+	}
+	if len(links) > 0 {
+		return checkCourseSelectionPage(client, cfg, links[0])
+	}
 
 	return searchKeywords(body)
+}
+
+func checkCourseSelectionPage(client *http.Client, cfg *config.Config, targetURL string) (bool, string, error) {
+	req, _ := http.NewRequest("GET", targetURL, nil)
+	req.Header.Set("User-Agent", cfg.UserAgent)
+	req.Header.Set("Referer", cfg.UniversityURL+"/")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "", fmt.Errorf("ders seçme hedef sayfası GET: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, "", fmt.Errorf("ders seçme hedef sayfası GET: status=%d", resp.StatusCode)
+	}
+	if strings.Contains(resp.Request.URL.Path, "login") || strings.Contains(resp.Request.URL.Path, "auth") {
+		return false, "", fmt.Errorf("session_expired")
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, "", fmt.Errorf("ders seçme hedef body okuma: %w", err)
+	}
+	log.Printf("[dersecme] Hedef sayfa çekildi: %d byte, URL=%s", len(body), resp.Request.URL.String())
+	return searchKeywords(body)
+}
+
+func findCourseSelectionLinks(body []byte, baseURL *url.URL) ([]string, error) {
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return nil, fmt.Errorf("ders seçme linkleri parse: %w", err)
+	}
+
+	seen := make(map[string]bool)
+	var links []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			href := ""
+			for _, attr := range n.Attr {
+				if strings.EqualFold(attr.Key, "href") {
+					href = strings.TrimSpace(attr.Val)
+					break
+				}
+			}
+			searchable := normalizeText(extractAllText(n) + " " + href)
+			if href != "" && isCourseSelectionSignal(searchable) {
+				if parsed, parseErr := url.Parse(href); parseErr == nil {
+					resolved := baseURL.ResolveReference(parsed).String()
+					if !seen[resolved] {
+						seen[resolved] = true
+						links = append(links, resolved)
+					}
+				}
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	return links, nil
+}
+
+func isCourseSelectionSignal(text string) bool {
+	for _, keyword := range activeKeywords {
+		if strings.Contains(text, normalizeText(keyword)) {
+			return true
+		}
+	}
+	return false
 }
 
 // searchKeywords HTML body içinde anahtar kelimeleri arar.

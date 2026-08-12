@@ -1,9 +1,52 @@
 package dersecme
 
 import (
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+
+	"notbot/config"
 )
+
+type dersecmeRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn dersecmeRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func TestCheckFollowsCourseSelectionLinkAndRejectsEndedTargetPage(t *testing.T) {
+	detailRequests := 0
+	client := &http.Client{Transport: dersecmeRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `<html><body><a href="/ogrenciler/derssecme/ogrindex">Ders Seçme</a></body></html>`
+		if req.URL.Path == "/ogrenciler/derssecme/ogrindex" {
+			detailRequests++
+			body = `<html><body><font>DEĞERLİ ÖĞRENCİMİZ, DERS SEÇİMLERİ SONA ERMİŞTİR.</font></body></html>`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": {"text/html; charset=utf-8"},
+			},
+			Body:    io.NopCloser(strings.NewReader(body)),
+			Request: req,
+		}, nil
+	})}
+
+	found, keyword, err := Check(client, &config.Config{
+		UniversityURL: "https://ois.example",
+		UserAgent:     "test-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatalf("expected ended target page to be inactive, matched %q", keyword)
+	}
+	if detailRequests != 1 {
+		t.Fatalf("expected the course-selection link to be fetched once, got %d", detailRequests)
+	}
+}
 
 func TestSearchKeywordsIgnoresEndedCourseSelectionNotice(t *testing.T) {
 	body := []byte(`<font size="5" color="red">DEĞERLİ ÖĞRENCİMİZ, DERS SEÇİMLERİ SONA ERMİŞTİR, DERS SEÇME İŞLEMİ İÇİN DANIŞMANINIZLA İLETİŞİME GEÇİNİZ.</font>`)
