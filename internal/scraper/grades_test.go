@@ -225,6 +225,39 @@ func TestFetchGradesSkipsCourseOnlyPeriodWithoutPublishedScores(t *testing.T) {
 	}
 }
 
+func TestFetchGradesReturnsOnlyCoursesAndComponentsWithPublishedGrades(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `
+			<table class="a4">
+				<tr><th>Etki Oranı</th><th>BOS101 - Notsuz Ders</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
+				<tr><td>%40</td><td>Vize</td><td>-</td><td></td></tr>
+				<tr><th>Etki Oranı</th><th>DOL101 - Notlu Ders</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
+				<tr><td>%30</td><td>Ödev</td><td></td><td></td></tr>
+				<tr><td>%70</td><td>Final</td><td>85</td><td>18/08/2026</td></tr>
+			</table>`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/html; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})}
+
+	courses, err := FetchGrades(client, &config.Config{
+		UniversityURL: "https://ois.example",
+		UserAgent:     "test-agent",
+	})
+	if err != nil {
+		t.Fatalf("FetchGrades returned error: %v", err)
+	}
+	if len(courses) != 1 || courses[0].Code != "DOL101" {
+		t.Fatalf("unexpected courses: %#v", courses)
+	}
+	if len(courses[0].Components) != 1 || courses[0].Components[0].Name != "Final" || courses[0].Components[0].Score != "85" {
+		t.Fatalf("unexpected components: %#v", courses[0].Components)
+	}
+}
+
 func readRequestBody(t *testing.T, req *http.Request) string {
 	t.Helper()
 	body, err := io.ReadAll(req.Body)

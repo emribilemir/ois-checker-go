@@ -36,7 +36,7 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	if err != nil {
 		return nil, err
 	}
-	if courses := parseGrades(body); hasPublishedGrades(courses) {
+	if courses := publishedCourses(parseGrades(body)); len(courses) > 0 {
 		return courses, nil
 	}
 
@@ -45,7 +45,7 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 		if fallbackErr != nil {
 			return nil, fallbackErr
 		}
-		if courses := parseGrades(fallbackBody); hasPublishedGrades(courses) {
+		if courses := publishedCourses(parseGrades(fallbackBody)); len(courses) > 0 {
 			return courses, nil
 		}
 	}
@@ -53,18 +53,29 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	return nil, fmt.Errorf("sinav sonuc sayfasi ayrıştırılamadı: status=%d final=%s bytes=%d", http.StatusOK, finalURL, len(body))
 }
 
-func hasPublishedGrades(courses []Course) bool {
+func publishedCourses(courses []Course) []Course {
+	var published []Course
 	for _, course := range courses {
-		if publishedGradeValue(course.LetterGrade) || publishedGradeValue(course.SuccessScore) {
-			return true
+		if !publishedGradeValue(course.LetterGrade) {
+			course.LetterGrade = ""
 		}
+		if !publishedGradeValue(course.SuccessScore) {
+			course.SuccessScore = ""
+		}
+
+		components := course.Components[:0]
 		for _, component := range course.Components {
 			if publishedGradeValue(component.Score) {
-				return true
+				components = append(components, component)
 			}
 		}
+		course.Components = components
+
+		if course.LetterGrade != "" || course.SuccessScore != "" || len(course.Components) > 0 {
+			published = append(published, course)
+		}
 	}
-	return false
+	return published
 }
 
 func publishedGradeValue(value string) bool {
