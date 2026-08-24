@@ -3,10 +3,9 @@ package scraper
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"net/url"
 	"strings"
-	"unicode"
 
 	"golang.org/x/net/html"
 
@@ -33,95 +32,123 @@ type Course struct {
 // FetchGrades OIS'ten sınav sonuçlarını çeker.
 func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	gradesURL := cfg.UniversityURL + "/ogrenciler/belge/ogrsinavsonuc"
-	req, _ := http.NewRequest("GET", gradesURL, nil)
+	body, finalURL, err := fetchGradePage(client, cfg, http.MethodGet, gradesURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if courses := parseGrades(body); len(courses) > 0 {
+		return courses, nil
+	}
+
+	for _, fallback := range gradePeriodFallbacks(body, cfg.UniversityURL) {
+		fallbackBody, _, fallbackErr := fetchGradePage(client, cfg, fallback.method, fallback.target, fallback.values)
+		if fallbackErr != nil {
+			return nil, fallbackErr
+		}
+		if courses := parseGrades(fallbackBody); len(courses) > 0 {
+			return courses, nil
+		}
+	}
+
+	return nil, fmt.Errorf("sinav sonuc sayfasi ayrıştırılamadı: status=%d final=%s bytes=%d", http.StatusOK, finalURL, len(body))
+}
+
+func fetchGradePage(client *http.Client, cfg *config.Config, method, target string, values url.Values) ([]byte, string, error) {
+	var requestBody io.Reader
+	if values != nil {
+		requestBody = strings.NewReader(values.Encode())
+	}
+	req, err := http.NewRequest(method, target, requestBody)
+	if err != nil {
+		return nil, "", fmt.Errorf("sinav sonuc istek oluşturma: %w", err)
+	}
 	req.Header.Set("User-Agent", cfg.UserAgent)
 	req.Header.Set("Referer", cfg.UniversityURL+"/")
+	if values != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sinav sonuc GET: %w", err)
+		return nil, "", fmt.Errorf("sinav sonuc %s: %w", method, err)
 	}
 	defer resp.Body.Close()
+	finalURL := resp.Request.URL.String()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sinav sonuc GET: status=%d final=%s", resp.StatusCode, resp.Request.URL.String())
+		return nil, finalURL, fmt.Errorf("sinav sonuc %s: status=%d final=%s", method, resp.StatusCode, finalURL)
 	}
 
-	// Session expire tespiti
 	if strings.Contains(resp.Request.URL.Path, "login") || strings.Contains(resp.Request.URL.Path, "auth") {
-		return nil, fmt.Errorf("session_expired")
+		return nil, finalURL, fmt.Errorf("session_expired")
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("sinav sonuc body okuma: %w", err)
+		return nil, finalURL, fmt.Errorf("sinav sonuc body okuma: %w", err)
 	}
-	courses := parseGrades(body)
-	if len(courses) == 0 {
-		log.Printf("[grades] page structure: %s", summarizeGradePage(body))
-		return nil, fmt.Errorf("sinav sonuc sayfasi ayrıştırılamadı: status=%d final=%s bytes=%d", resp.StatusCode, resp.Request.URL.String(), len(body))
-	}
-	return courses, nil
+	return body, finalURL, nil
 }
 
-func summarizeGradePage(body []byte) string {
-	doc, _ := html.Parse(strings.NewReader(string(body)))
+type gradePeriodRequest struct {
+	method string
+	target string
+	values url.Values
+}
 
-	var tables []*html.Node
-	findAllByTag(doc, "table", &tables)
+func gradePeriodFallbacks(body []byte, universityURL string) []gradePeriodRequest {
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return nil
+	}
 	var forms []*html.Node
 	findAllByTag(doc, "form", &forms)
-	var selects []*html.Node
-	findAllByTag(doc, "select", &selects)
-
-	var summary strings.Builder
-	fmt.Fprintf(&summary, "tables=%d", len(tables))
-	for i, table := range tables {
-		var trs []*html.Node
-		findTRs(table, &trs)
-		maxTH, maxTD := 0, 0
-		for _, tr := range trs {
-			if n := len(getChildrenByTag(tr, "th")); n > maxTH {
-				maxTH = n
-			}
-			if n := len(getChildrenByTag(tr, "td")); n > maxTD {
-				maxTD = n
-			}
+	for _, form := range forms {
+		seasonSelect := findSelectByName(form, "sezon")
+		termSelect := findSelectByName(form, "donem")
+		if seasonSelect == nil || termSelect == nil {
+			continue
 		}
-		fmt.Fprintf(&summary, " table[%d]={class=%q,rows=%d,max_th=%d,max_td=%d}", i, safeClass(table), len(trs), maxTH, maxTD)
-	}
-	fmt.Fprintf(&summary, " forms=%d", len(forms))
-	for i, form := range forms {
-		method := strings.ToLower(attrValue(form, "method"))
+
+		target, ok := safeFormTarget(universityURL, attrValue(form, "action"))
+		if !ok {
+			return nil
+		}
+		method := strings.ToUpper(attrValue(form, "method"))
 		if method == "" {
-			method = "get"
+			method = http.MethodGet
 		}
-		fmt.Fprintf(&summary, " form[%d]={method=%q,action=%q}", i, safeAttr(method), safeAttr(attrValue(form, "action")))
-	}
-	fmt.Fprintf(&summary, " selects=%d", len(selects))
-	for i, selectNode := range selects {
-		var options []*html.Node
-		findAllByTag(selectNode, "option", &options)
-		values := make([]string, 0, len(options))
-		selected := ""
-		for _, option := range options {
-			value := safeAttr(attrValue(option, "value"))
-			values = append(values, value)
-			if hasAttr(option, "selected") {
-				selected = value
+		if method != http.MethodPost {
+			return nil
+		}
+
+		selectedSeason, seasons := selectState(seasonSelect)
+		selectedTerm, terms := selectState(termSelect)
+		baseValues := hiddenFormValues(form)
+		var periods [][2]string
+		switch selectedTerm {
+		case "3":
+			periods = append(periods, [2]string{selectedSeason, "2"}, [2]string{selectedSeason, "1"})
+		case "2":
+			periods = append(periods, [2]string{selectedSeason, "1"})
+		case "1":
+			if previous := previousAcademicSeason(selectedSeason); previous != "" {
+				periods = append(periods, [2]string{previous, "2"}, [2]string{previous, "1"})
 			}
 		}
-		fmt.Fprintf(&summary, " select[%d]={name=%q,options=%q,selected=%q}", i, safeAttr(attrValue(selectNode, "name")), strings.Join(values, ","), selected)
-	}
 
-	pageText := textContent(doc)
-	var found []string
-	for _, marker := range []string{"Etki Oranı", "Puan", "Açıklanma Tarihi", "Başarı Puanı", "Kayıt bulunamadı", "Sonuç bulunamadı"} {
-		if strings.Contains(pageText, marker) {
-			found = append(found, marker)
+		var result []gradePeriodRequest
+		for _, period := range periods {
+			if !seasons[period[0]] || !terms[period[1]] {
+				continue
+			}
+			values := cloneValues(baseValues)
+			values.Set("sezon", period[0])
+			values.Set("donem", period[1])
+			result = append(result, gradePeriodRequest{method: method, target: target, values: values})
 		}
+		return result
 	}
-	fmt.Fprintf(&summary, " markers=%q", strings.Join(found, ","))
-	return summary.String()
+	return nil
 }
 
 func findAllByTag(n *html.Node, tag string, result *[]*html.Node) {
@@ -131,6 +158,76 @@ func findAllByTag(n *html.Node, tag string, result *[]*html.Node) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		findAllByTag(c, tag, result)
 	}
+}
+
+func findSelectByName(n *html.Node, name string) *html.Node {
+	var selects []*html.Node
+	findAllByTag(n, "select", &selects)
+	for _, selectNode := range selects {
+		if attrValue(selectNode, "name") == name {
+			return selectNode
+		}
+	}
+	return nil
+}
+
+func selectState(selectNode *html.Node) (string, map[string]bool) {
+	var options []*html.Node
+	findAllByTag(selectNode, "option", &options)
+	values := make(map[string]bool, len(options))
+	selected := ""
+	for i, option := range options {
+		value := attrValue(option, "value")
+		values[value] = true
+		if hasAttr(option, "selected") || (i == 0 && selected == "") {
+			selected = value
+		}
+	}
+	return selected, values
+}
+
+func hiddenFormValues(form *html.Node) url.Values {
+	values := url.Values{}
+	var inputs []*html.Node
+	findAllByTag(form, "input", &inputs)
+	for _, input := range inputs {
+		if strings.EqualFold(attrValue(input, "type"), "hidden") && attrValue(input, "name") != "" {
+			values.Set(attrValue(input, "name"), attrValue(input, "value"))
+		}
+	}
+	return values
+}
+
+func safeFormTarget(universityURL, action string) (string, bool) {
+	base, err := url.Parse(universityURL)
+	if err != nil {
+		return "", false
+	}
+	reference, err := url.Parse(action)
+	if err != nil {
+		return "", false
+	}
+	target := base.ResolveReference(reference)
+	if target.Scheme != base.Scheme || target.Host != base.Host {
+		return "", false
+	}
+	return target.String(), true
+}
+
+func previousAcademicSeason(season string) string {
+	var start, end int
+	if _, err := fmt.Sscanf(season, "%d-%d", &start, &end); err != nil || end != start+1 {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", start-1, end-1)
+}
+
+func cloneValues(values url.Values) url.Values {
+	clone := url.Values{}
+	for key, entries := range values {
+		clone[key] = append([]string(nil), entries...)
+	}
+	return clone
 }
 
 func attrValue(n *html.Node, key string) string {
@@ -149,38 +246,6 @@ func hasAttr(n *html.Node, key string) bool {
 		}
 	}
 	return false
-}
-
-func safeAttr(value string) string {
-	var clean strings.Builder
-	for _, r := range value {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '_' || r == '/' || r == '.' {
-			clean.WriteRune(r)
-		}
-		if clean.Len() >= 120 {
-			break
-		}
-	}
-	return strings.TrimSpace(clean.String())
-}
-
-func safeClass(n *html.Node) string {
-	for _, attr := range n.Attr {
-		if attr.Key != "class" {
-			continue
-		}
-		var clean strings.Builder
-		for _, r := range attr.Val {
-			if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '_' {
-				clean.WriteRune(r)
-			}
-			if clean.Len() >= 120 {
-				break
-			}
-		}
-		return strings.TrimSpace(clean.String())
-	}
-	return ""
 }
 
 // parseGrades OIS sınav sonuçları sayfasını parse eder.

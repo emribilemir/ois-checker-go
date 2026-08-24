@@ -3,6 +3,7 @@ package scraper
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -100,32 +101,81 @@ func TestParseGradesSplitsSingleLetterGradeWithoutDash(t *testing.T) {
 	}
 }
 
-func TestSummarizeGradePageReportsStructureWithoutPageValues(t *testing.T) {
-	body := []byte(`
-		<html>
-			<head><title>Emir Bilici - Sınav Sonuçları</title></head>
-			<body>
-				<form method="post" action="/ogrenciler/belge/ogrsinavsonuc">
-					<select name="yil"><option value="2025">2025-2026</option><option value="2026" selected>2026-2027</option></select>
-					<select name="donem"><option value="1">Güz</option><option value="2" selected>Bahar</option></select>
+func TestFetchGradesFallsBackFromEmptySummerToSpringTerm(t *testing.T) {
+	requestCount := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestCount++
+		var body string
+		switch requestCount {
+		case 1:
+			if req.Method != http.MethodGet {
+				t.Fatalf("first request method = %s, want GET", req.Method)
+			}
+			body = `
+				<form method="post" action="/ogrenciler/belge/ogrsinavsonuc/ogrenci_no/123">
+					<input type="hidden" name="token" value="safe-token">
+					<select name="sezon">
+						<option value="2024-2025">2024-2025</option>
+						<option value="2025-2026" selected>2025-2026</option>
+					</select>
+					<select name="donem">
+						<option value="1">Güz</option>
+						<option value="2">Bahar</option>
+						<option value="3" selected>Yaz</option>
+					</select>
 				</form>
-				<table class="responsive results">
-					<tr><th>Etki Oranı</th><th>240001 - Siber Güvenlik</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
+				<table class="a4"></table>`
+		case 2:
+			if req.Method != http.MethodPost {
+				t.Fatalf("fallback request method = %s, want POST", req.Method)
+			}
+			if req.URL.Path != "/ogrenciler/belge/ogrsinavsonuc/ogrenci_no/123" {
+				t.Fatalf("fallback path = %q", req.URL.Path)
+			}
+			posted, err := url.ParseQuery(readRequestBody(t, req))
+			if err != nil {
+				t.Fatalf("parse fallback form: %v", err)
+			}
+			want := url.Values{"sezon": {"2025-2026"}, "donem": {"2"}, "token": {"safe-token"}}
+			if posted.Encode() != want.Encode() {
+				t.Fatalf("fallback form = %q, want %q", posted.Encode(), want.Encode())
+			}
+			body = `
+				<table class="a4">
+					<tr><th>Etki Oranı</th><th>1410121006 - Siber Güvenlik</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
 					<tr><td>%40</td><td>Final</td><td>85</td><td>18/08/2026</td></tr>
-				</table>
-			</body>
-		</html>
-	`)
-
-	got := summarizeGradePage(body)
-	want := `tables=1 table[0]={class="responsive results",rows=2,max_th=4,max_td=4} forms=1 form[0]={method="post",action="/ogrenciler/belge/ogrsinavsonuc"} selects=2 select[0]={name="yil",options="2025,2026",selected="2026"} select[1]={name="donem",options="1,2",selected="2"} markers="Etki Oranı,Puan,Açıklanma Tarihi"`
-	if got != want {
-		t.Fatalf("unexpected summary:\nwant: %s\n got: %s", want, got)
-	}
-
-	for _, sensitive := range []string{"Emir Bilici", "240001", "Siber Güvenlik", "85", "18/08/2026"} {
-		if strings.Contains(got, sensitive) {
-			t.Fatalf("summary leaked page value %q: %s", sensitive, got)
+				</table>`
+		default:
+			t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL)
 		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/html; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})}
+
+	courses, err := FetchGrades(client, &config.Config{
+		UniversityURL: "https://ois.example",
+		UserAgent:     "test-agent",
+	})
+	if err != nil {
+		t.Fatalf("FetchGrades returned error: %v", err)
 	}
+	if requestCount != 2 {
+		t.Fatalf("request count = %d, want 2", requestCount)
+	}
+	if len(courses) != 1 || courses[0].Name != "Siber Güvenlik" {
+		t.Fatalf("unexpected courses: %#v", courses)
+	}
+}
+
+func readRequestBody(t *testing.T, req *http.Request) string {
+	t.Helper()
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	return string(body)
 }
