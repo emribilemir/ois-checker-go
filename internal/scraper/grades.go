@@ -68,8 +68,10 @@ func summarizeGradePage(body []byte) string {
 
 	var tables []*html.Node
 	findAllByTag(doc, "table", &tables)
-	formCount := countByTag(doc, "form")
-	selectCount := countByTag(doc, "select")
+	var forms []*html.Node
+	findAllByTag(doc, "form", &forms)
+	var selects []*html.Node
+	findAllByTag(doc, "select", &selects)
 
 	var summary strings.Builder
 	fmt.Fprintf(&summary, "tables=%d", len(tables))
@@ -87,7 +89,29 @@ func summarizeGradePage(body []byte) string {
 		}
 		fmt.Fprintf(&summary, " table[%d]={class=%q,rows=%d,max_th=%d,max_td=%d}", i, safeClass(table), len(trs), maxTH, maxTD)
 	}
-	fmt.Fprintf(&summary, " forms=%d selects=%d", formCount, selectCount)
+	fmt.Fprintf(&summary, " forms=%d", len(forms))
+	for i, form := range forms {
+		method := strings.ToLower(attrValue(form, "method"))
+		if method == "" {
+			method = "get"
+		}
+		fmt.Fprintf(&summary, " form[%d]={method=%q,action=%q}", i, safeAttr(method), safeAttr(attrValue(form, "action")))
+	}
+	fmt.Fprintf(&summary, " selects=%d", len(selects))
+	for i, selectNode := range selects {
+		var options []*html.Node
+		findAllByTag(selectNode, "option", &options)
+		values := make([]string, 0, len(options))
+		selected := ""
+		for _, option := range options {
+			value := safeAttr(attrValue(option, "value"))
+			values = append(values, value)
+			if hasAttr(option, "selected") {
+				selected = value
+			}
+		}
+		fmt.Fprintf(&summary, " select[%d]={name=%q,options=%q,selected=%q}", i, safeAttr(attrValue(selectNode, "name")), strings.Join(values, ","), selected)
+	}
 
 	pageText := textContent(doc)
 	var found []string
@@ -109,15 +133,35 @@ func findAllByTag(n *html.Node, tag string, result *[]*html.Node) {
 	}
 }
 
-func countByTag(n *html.Node, tag string) int {
-	count := 0
-	if n.Type == html.ElementNode && n.Data == tag {
-		count++
+func attrValue(n *html.Node, key string) string {
+	for _, attr := range n.Attr {
+		if attr.Key == key {
+			return attr.Val
+		}
 	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		count += countByTag(c, tag)
+	return ""
+}
+
+func hasAttr(n *html.Node, key string) bool {
+	for _, attr := range n.Attr {
+		if attr.Key == key {
+			return true
+		}
 	}
-	return count
+	return false
+}
+
+func safeAttr(value string) string {
+	var clean strings.Builder
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '_' || r == '/' || r == '.' {
+			clean.WriteRune(r)
+		}
+		if clean.Len() >= 120 {
+			break
+		}
+	}
+	return strings.TrimSpace(clean.String())
 }
 
 func safeClass(n *html.Node) string {

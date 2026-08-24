@@ -105,7 +105,10 @@ func TestSummarizeGradePageReportsStructureWithoutPageValues(t *testing.T) {
 		<html>
 			<head><title>Emir Bilici - Sınav Sonuçları</title></head>
 			<body>
-				<form><select name="donem"><option>2025-2026</option></select></form>
+				<form method="post" action="/ogrenciler/belge/ogrsinavsonuc">
+					<select name="yil"><option value="2025">2025-2026</option><option value="2026" selected>2026-2027</option></select>
+					<select name="donem"><option value="1">Güz</option><option value="2" selected>Bahar</option></select>
+				</form>
 				<table class="responsive results">
 					<tr><th>Etki Oranı</th><th>240001 - Siber Güvenlik</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
 					<tr><td>%40</td><td>Final</td><td>85</td><td>18/08/2026</td></tr>
@@ -115,7 +118,7 @@ func TestSummarizeGradePageReportsStructureWithoutPageValues(t *testing.T) {
 	`)
 
 	got := summarizeGradePage(body)
-	want := `tables=1 table[0]={class="responsive results",rows=2,max_th=4,max_td=4} forms=1 selects=1 markers="Etki Oranı,Puan,Açıklanma Tarihi"`
+	want := `tables=1 table[0]={class="responsive results",rows=2,max_th=4,max_td=4} forms=1 form[0]={method="post",action="/ogrenciler/belge/ogrsinavsonuc"} selects=2 select[0]={name="yil",options="2025,2026",selected="2026"} select[1]={name="donem",options="1,2",selected="2"} markers="Etki Oranı,Puan,Açıklanma Tarihi"`
 	if got != want {
 		t.Fatalf("unexpected summary:\nwant: %s\n got: %s", want, got)
 	}
