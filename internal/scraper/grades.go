@@ -3,8 +3,10 @@ package scraper
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/html"
 
@@ -55,9 +57,86 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	}
 	courses := parseGrades(body)
 	if len(courses) == 0 {
+		log.Printf("[grades] page structure: %s", summarizeGradePage(body))
 		return nil, fmt.Errorf("sinav sonuc sayfasi ayrıştırılamadı: status=%d final=%s bytes=%d", resp.StatusCode, resp.Request.URL.String(), len(body))
 	}
 	return courses, nil
+}
+
+func summarizeGradePage(body []byte) string {
+	doc, _ := html.Parse(strings.NewReader(string(body)))
+
+	var tables []*html.Node
+	findAllByTag(doc, "table", &tables)
+	formCount := countByTag(doc, "form")
+	selectCount := countByTag(doc, "select")
+
+	var summary strings.Builder
+	fmt.Fprintf(&summary, "tables=%d", len(tables))
+	for i, table := range tables {
+		var trs []*html.Node
+		findTRs(table, &trs)
+		maxTH, maxTD := 0, 0
+		for _, tr := range trs {
+			if n := len(getChildrenByTag(tr, "th")); n > maxTH {
+				maxTH = n
+			}
+			if n := len(getChildrenByTag(tr, "td")); n > maxTD {
+				maxTD = n
+			}
+		}
+		fmt.Fprintf(&summary, " table[%d]={class=%q,rows=%d,max_th=%d,max_td=%d}", i, safeClass(table), len(trs), maxTH, maxTD)
+	}
+	fmt.Fprintf(&summary, " forms=%d selects=%d", formCount, selectCount)
+
+	pageText := textContent(doc)
+	var found []string
+	for _, marker := range []string{"Etki Oranı", "Puan", "Açıklanma Tarihi", "Başarı Puanı", "Kayıt bulunamadı", "Sonuç bulunamadı"} {
+		if strings.Contains(pageText, marker) {
+			found = append(found, marker)
+		}
+	}
+	fmt.Fprintf(&summary, " markers=%q", strings.Join(found, ","))
+	return summary.String()
+}
+
+func findAllByTag(n *html.Node, tag string, result *[]*html.Node) {
+	if n.Type == html.ElementNode && n.Data == tag {
+		*result = append(*result, n)
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		findAllByTag(c, tag, result)
+	}
+}
+
+func countByTag(n *html.Node, tag string) int {
+	count := 0
+	if n.Type == html.ElementNode && n.Data == tag {
+		count++
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		count += countByTag(c, tag)
+	}
+	return count
+}
+
+func safeClass(n *html.Node) string {
+	for _, attr := range n.Attr {
+		if attr.Key != "class" {
+			continue
+		}
+		var clean strings.Builder
+		for _, r := range attr.Val {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '_' {
+				clean.WriteRune(r)
+			}
+			if clean.Len() >= 120 {
+				break
+			}
+		}
+		return strings.TrimSpace(clean.String())
+	}
+	return ""
 }
 
 // parseGrades OIS sınav sonuçları sayfasını parse eder.

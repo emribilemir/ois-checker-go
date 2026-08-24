@@ -99,3 +99,30 @@ func TestParseGradesSplitsSingleLetterGradeWithoutDash(t *testing.T) {
 		t.Fatalf("unexpected success score: %q", successScore)
 	}
 }
+
+func TestSummarizeGradePageReportsStructureWithoutPageValues(t *testing.T) {
+	body := []byte(`
+		<html>
+			<head><title>Emir Bilici - Sınav Sonuçları</title></head>
+			<body>
+				<form><select name="donem"><option>2025-2026</option></select></form>
+				<table class="responsive results">
+					<tr><th>Etki Oranı</th><th>240001 - Siber Güvenlik</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
+					<tr><td>%40</td><td>Final</td><td>85</td><td>18/08/2026</td></tr>
+				</table>
+			</body>
+		</html>
+	`)
+
+	got := summarizeGradePage(body)
+	want := `tables=1 table[0]={class="responsive results",rows=2,max_th=4,max_td=4} forms=1 selects=1 markers="Etki Oranı,Puan,Açıklanma Tarihi"`
+	if got != want {
+		t.Fatalf("unexpected summary:\nwant: %s\n got: %s", want, got)
+	}
+
+	for _, sensitive := range []string{"Emir Bilici", "240001", "Siber Güvenlik", "85", "18/08/2026"} {
+		if strings.Contains(got, sensitive) {
+			t.Fatalf("summary leaked page value %q: %s", sensitive, got)
+		}
+	}
+}
