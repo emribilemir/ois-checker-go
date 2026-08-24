@@ -171,6 +171,60 @@ func TestFetchGradesFallsBackFromEmptySummerToSpringTerm(t *testing.T) {
 	}
 }
 
+func TestFetchGradesSkipsCourseOnlyPeriodWithoutPublishedScores(t *testing.T) {
+	requestCount := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestCount++
+		var body string
+		switch requestCount {
+		case 1:
+			body = `
+				<form method="post" action="/ogrenciler/belge/ogrsinavsonuc/ogrenci_no/123">
+					<select name="sezon">
+						<option value="2025-2026" selected>2025-2026</option>
+					</select>
+					<select name="donem">
+						<option value="1">Güz</option>
+						<option value="2">Bahar</option>
+						<option value="3" selected>Yaz</option>
+					</select>
+				</form>
+				<table class="a4">
+					<tr><th>Etki Oranı</th><th>YAZ101 - Yaz Dersi</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
+				</table>`
+		case 2:
+			body = `
+				<table class="a4">
+					<tr><th>Etki Oranı</th><th>BAH101 - Bahar Dersi</th><th>Puan</th><th>Açıklanma Tarihi</th></tr>
+					<tr><td>%40</td><td>Final</td><td>85</td><td>18/08/2026</td></tr>
+				</table>`
+		default:
+			t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL)
+		}
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/html; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})}
+
+	courses, err := FetchGrades(client, &config.Config{
+		UniversityURL: "https://ois.example",
+		UserAgent:     "test-agent",
+	})
+	if err != nil {
+		t.Fatalf("FetchGrades returned error: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("request count = %d, want 2", requestCount)
+	}
+	if len(courses) != 1 || courses[0].Code != "BAH101" || courses[0].Components[0].Score != "85" {
+		t.Fatalf("unexpected courses: %#v", courses)
+	}
+}
+
 func readRequestBody(t *testing.T, req *http.Request) string {
 	t.Helper()
 	body, err := io.ReadAll(req.Body)

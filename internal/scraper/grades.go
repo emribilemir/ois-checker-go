@@ -36,7 +36,7 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 	if err != nil {
 		return nil, err
 	}
-	if courses := parseGrades(body); len(courses) > 0 {
+	if courses := parseGrades(body); hasPublishedGrades(courses) {
 		return courses, nil
 	}
 
@@ -45,12 +45,35 @@ func FetchGrades(client *http.Client, cfg *config.Config) ([]Course, error) {
 		if fallbackErr != nil {
 			return nil, fallbackErr
 		}
-		if courses := parseGrades(fallbackBody); len(courses) > 0 {
+		if courses := parseGrades(fallbackBody); hasPublishedGrades(courses) {
 			return courses, nil
 		}
 	}
 
 	return nil, fmt.Errorf("sinav sonuc sayfasi ayrıştırılamadı: status=%d final=%s bytes=%d", http.StatusOK, finalURL, len(body))
+}
+
+func hasPublishedGrades(courses []Course) bool {
+	for _, course := range courses {
+		if publishedGradeValue(course.LetterGrade) || publishedGradeValue(course.SuccessScore) {
+			return true
+		}
+		for _, component := range course.Components {
+			if publishedGradeValue(component.Score) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func publishedGradeValue(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "-", "--", "—":
+		return false
+	default:
+		return true
+	}
 }
 
 func fetchGradePage(client *http.Client, cfg *config.Config, method, target string, values url.Values) ([]byte, string, error) {
