@@ -45,6 +45,7 @@ var activeKeywords = []string{
 
 // Bu ifadeler varsa ders seçme menüsü/uyarısı görünse bile süreç açık değildir.
 var inactivePhrases = []string{
+	"ders seçme işlemleri kapalı",
 	"ders seçimleri sona ermiştir",
 	"ders secimleri sona ermistir",
 	"ders seçimi sona ermiştir",

@@ -60,6 +60,18 @@ func TestSearchKeywordsIgnoresEndedCourseSelectionNotice(t *testing.T) {
 	}
 }
 
+func TestSearchKeywordsIgnoresCourseSelectionClosedForStudentClass(t *testing.T) {
+	body := []byte(`<main><h2>Ders Seçme</h2><div style="color: red">Sizin sınıfınız için ders seçme işlemleri kapalı</div></main>`)
+
+	found, keyword, err := searchKeywords(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatalf("expected the class-specific closed notice to be inactive, matched %q", keyword)
+	}
+}
+
 func TestSearchKeywordsEndedNoticeOverridesPersistentCourseSelectionMenuLink(t *testing.T) {
 	body := []byte(`<nav><a href="/ogrenciler/ders-secme">Ders Seçme</a></nav>` +
 		`<main>` + strings.Repeat("duyuru içeriği ", 40) +

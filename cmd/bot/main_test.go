@@ -124,3 +124,46 @@ func TestRunAuthenticatedChecksCourseSelectionWhenGradePageIsInvalid(t *testing.
 		t.Fatalf("expected course selection to be checked despite the grade error, got %d requests", rootRequests)
 	}
 }
+
+func TestRunDersSecmeCheckKeepsMonitoringAfterClassClosedNotice(t *testing.T) {
+	rootRequests := 0
+	client := &http.Client{Transport: mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		rootRequests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": {"text/html; charset=utf-8"},
+			},
+			Body: io.NopCloser(strings.NewReader(
+				`<main><h2>Ders Seçme</h2><div>Sizin sınıfınız için ders seçme işlemleri kapalı</div></main>`,
+			)),
+			Request: req,
+		}, nil
+	})}
+	cfg := &config.Config{
+		UniversityURL: "https://ois.example",
+		UserAgent:     "test-agent",
+	}
+
+	previousActive := isDersSecmeActive
+	previousNotified := dersSecmeNotified
+	isDersSecmeActive = true
+	dersSecmeNotified = false
+	t.Cleanup(func() {
+		isDersSecmeActive = previousActive
+		dersSecmeNotified = previousNotified
+	})
+
+	runDersSecmeCheck(client, cfg)
+	runDersSecmeCheck(client, cfg)
+
+	if rootRequests != 2 {
+		t.Fatalf("expected monitoring to keep checking after a closed notice, got %d requests", rootRequests)
+	}
+	if !isDersSecmeActive {
+		t.Fatal("expected course-selection monitoring to remain enabled")
+	}
+	if dersSecmeNotified {
+		t.Fatal("expected no active-course-selection notification state")
+	}
+}
