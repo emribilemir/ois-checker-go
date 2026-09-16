@@ -10,9 +10,45 @@ import (
 	"time"
 
 	"notbot/config"
+	"notbot/internal/auth"
 	"notbot/internal/diff"
 	"notbot/internal/scraper"
 )
+
+func TestTryLoginStopsAfterFiveCaptchaFailures(t *testing.T) {
+	attempts := 0
+	login := func(*http.Client, *config.Config) (auth.LoginResult, error) {
+		attempts++
+		return auth.LoginResult{Reason: "invalid_captcha"}, nil
+	}
+
+	success, _ := tryLogin(&http.Client{}, &config.Config{}, login, func(time.Duration) {})
+	if success {
+		t.Fatal("expected login to fail")
+	}
+	if attempts != 5 {
+		t.Fatalf("expected five login attempts, got %d", attempts)
+	}
+}
+
+func TestTryLoginDoesNotRetryInvalidCredentials(t *testing.T) {
+	attempts := 0
+	login := func(*http.Client, *config.Config) (auth.LoginResult, error) {
+		attempts++
+		return auth.LoginResult{Reason: "invalid_credentials"}, nil
+	}
+
+	success, reason := tryLogin(&http.Client{}, &config.Config{}, login, func(time.Duration) {})
+	if success {
+		t.Fatal("expected login to fail")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected invalid credentials to stop immediately, got %d attempts", attempts)
+	}
+	if reason != "invalid_credentials" {
+		t.Fatalf("expected invalid_credentials reason, got %q", reason)
+	}
+}
 
 type mainRoundTripFunc func(*http.Request) (*http.Response, error)
 

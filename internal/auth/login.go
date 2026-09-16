@@ -121,7 +121,19 @@ func Login(client *http.Client, cfg *config.Config) (LoginResult, error) {
 	if !strings.Contains(postResp.Request.URL.Path, "login") {
 		return LoginResult{Success: true}, nil
 	}
-	return LoginResult{Reason: "wrong_credentials_or_captcha"}, nil
+	return LoginResult{Reason: classifyLoginFailure(bodyStr)}, nil
+}
+
+func classifyLoginFailure(body string) string {
+	normalized := strings.ToLower(body)
+	if strings.Contains(normalized, "güvenlik resmi hatalı") {
+		return "invalid_captcha"
+	}
+	if strings.Contains(normalized, "kullanıcı doğrulama başarısız") ||
+		strings.Contains(normalized, "kullanici doğrulama başarısız") {
+		return "invalid_credentials"
+	}
+	return "login_rejected"
 }
 
 // parseHiddenFields sayfadaki tüm hidden input'ları map olarak döner.

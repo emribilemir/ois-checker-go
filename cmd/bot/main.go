@@ -34,7 +34,12 @@ var (
 	processStartedAt  = time.Now()
 )
 
-const pollerStaleAfter = 10 * time.Minute
+const (
+	pollerStaleAfter = 10 * time.Minute
+	maxLoginAttempts = 5
+)
+
+type loginFunction func(*http.Client, *config.Config) (auth.LoginResult, error)
 
 func main() {
 	log.SetOutput(os.Stdout)
@@ -248,30 +253,46 @@ func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
 
 func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 	atomic.AddInt64(&checkCount, 1)
-	// Login (max 15 CAPTCHA denemesi)
-	var loginOK bool
-	for attempt := 0; attempt < 15; attempt++ {
-		log.Printf("OIS'e giriş deneniyor (Deneme %d/15)...", attempt+1)
-		result, err := auth.Login(client, cfg)
-		if err != nil {
-			log.Printf("login hata: %v", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		if result.Success {
-			loginOK = true
-			break
-		}
-		log.Printf("login başarısız [%d/15] (%s), tekrar deneniyor...", attempt+1, result.Reason)
-		time.Sleep(1 * time.Second)
-	}
+	loginOK, failureReason := tryLogin(client, cfg, auth.Login, time.Sleep)
 	if !loginOK {
-		reason := "15 denemede giriş sağlanamadı (CAPTCHA veya kimlik doğrulama hatası)"
+		reason := fmt.Sprintf("%d denemede giriş sağlanamadı (son hata: %s)", maxLoginAttempts, failureReason)
+		if failureReason == "invalid_credentials" {
+			reason = "OIS kullanıcı adı veya şifresi reddedildi"
+		}
 		recordCheckFailure(reason)
-		log.Println("15 denemede login sağlanamadı, bu döngü atlanıyor")
+		log.Printf("login sağlanamadı, bu döngü atlanıyor: %s", reason)
 		return nil, false
 	}
 	return runAuthenticated(client, cfg)
+}
+
+func tryLogin(client *http.Client, cfg *config.Config, login loginFunction, pause func(time.Duration)) (bool, string) {
+	lastReason := "login_rejected"
+	for attempt := 0; attempt < maxLoginAttempts; attempt++ {
+		log.Printf("OIS'e giriş deneniyor (Deneme %d/%d)...", attempt+1, maxLoginAttempts)
+		result, err := login(client, cfg)
+		if err != nil {
+			log.Printf("login hata: %v", err)
+			lastReason = err.Error()
+			if attempt+1 < maxLoginAttempts {
+				pause(2 * time.Second)
+			}
+			continue
+		}
+		if result.Success {
+			return true, ""
+		}
+		lastReason = result.Reason
+		if result.Reason == "invalid_credentials" {
+			log.Printf("login başarısız [%d/%d] (%s), tekrar denenmeyecek", attempt+1, maxLoginAttempts, result.Reason)
+			return false, lastReason
+		}
+		log.Printf("login başarısız [%d/%d] (%s), tekrar deneniyor...", attempt+1, maxLoginAttempts, result.Reason)
+		if attempt+1 < maxLoginAttempts {
+			pause(1 * time.Second)
+		}
+	}
+	return false, lastReason
 }
 
 func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {

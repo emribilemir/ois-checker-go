@@ -5,7 +5,7 @@ Built fully native with Go and executed locally without needing robust web brows
 
 ## Features
 - **Ultra-Lightweight**: Built on Go HTTP clients & raw HTML parsing.
-- **Tesseract Native Run**: Uses mathematical morphology (erode/dilate) to automatically preprocess and solve image CAPTCHAs.
+- **Tesseract OCR Ensemble**: Compares multiple live-site-tuned threshold variants and page-segmentation modes, then selects the strongest CAPTCHA reading by confidence and agreement.
 - **Interactive Telegram UI**: On-demand grade lookups, metrics overview, and runtime control via Telegram Callback buttons.
 - **Reliable Course-Selection Watch**: Distinguishes the permanent menu link, a genuinely open course-selection page, a closed-period notice, and an expired/conflicting OIS session.
 - **Selected-Course Change Alerts**: Includes the currently selected courses in the opening alert and reports later additions/removals without claiming whether a human or OIS made the change.
