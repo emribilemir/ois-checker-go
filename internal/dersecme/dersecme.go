@@ -62,9 +62,26 @@ var inactivePhrases = []string{
 	"course selection has ended",
 }
 
+type SelectedCourse struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+type Status struct {
+	Open            bool
+	Signal          string
+	SelectedCourses []SelectedCourse
+}
+
 // Check OIS ana sayfasındaki sidebar menüsünü kontrol eder.
 // Ders seçme ile ilgili bir ifade bulunursa (found=true, matchedKeyword) döner.
 func Check(client *http.Client, cfg *config.Config) (found bool, matchedKeyword string, err error) {
+	status, err := Inspect(client, cfg)
+	return status.Open, status.Signal, err
+}
+
+// Inspect returns the complete observable course-selection state.
+func Inspect(client *http.Client, cfg *config.Config) (Status, error) {
 	// OIS ana sayfasını çek
 	targetURL := cfg.UniversityURL + "/"
 	req, _ := http.NewRequest("GET", targetURL, nil)
@@ -73,56 +90,198 @@ func Check(client *http.Client, cfg *config.Config) (found bool, matchedKeyword 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, "", fmt.Errorf("ders seçme sayfası GET: %w", err)
+		return Status{}, fmt.Errorf("ders seçme sayfası GET: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Session expire tespiti
 	if strings.Contains(resp.Request.URL.Path, "login") || strings.Contains(resp.Request.URL.Path, "auth") {
-		return false, "", fmt.Errorf("session_expired")
+		return Status{}, fmt.Errorf("session_expired")
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, "", fmt.Errorf("body okuma: %w", err)
+		return Status{}, fmt.Errorf("body okuma: %w", err)
+	}
+	if isLoginDocument(body) {
+		return Status{}, fmt.Errorf("session_expired")
 	}
 
 	log.Printf("[dersecme] Ana sayfa çekildi: %d byte, URL=%s", len(body), resp.Request.URL.String())
 
 	links, err := findCourseSelectionLinks(body, resp.Request.URL)
 	if err != nil {
-		return false, "", err
+		return Status{}, err
 	}
 	if len(links) > 0 {
-		return checkCourseSelectionPage(client, cfg, links[0])
+		return inspectCourseSelectionPage(client, cfg, links[0])
 	}
 
-	return searchKeywords(body)
+	found, signal, err := searchKeywords(body)
+	return Status{Open: found, Signal: signal}, err
 }
 
-func checkCourseSelectionPage(client *http.Client, cfg *config.Config, targetURL string) (bool, string, error) {
+func inspectCourseSelectionPage(client *http.Client, cfg *config.Config, targetURL string) (Status, error) {
 	req, _ := http.NewRequest("GET", targetURL, nil)
 	req.Header.Set("User-Agent", cfg.UserAgent)
 	req.Header.Set("Referer", cfg.UniversityURL+"/")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, "", fmt.Errorf("ders seçme hedef sayfası GET: %w", err)
+		return Status{}, fmt.Errorf("ders seçme hedef sayfası GET: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, "", fmt.Errorf("ders seçme hedef sayfası GET: status=%d", resp.StatusCode)
+		return Status{}, fmt.Errorf("ders seçme hedef sayfası GET: status=%d", resp.StatusCode)
 	}
 	if strings.Contains(resp.Request.URL.Path, "login") || strings.Contains(resp.Request.URL.Path, "auth") {
-		return false, "", fmt.Errorf("session_expired")
+		return Status{}, fmt.Errorf("session_expired")
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, "", fmt.Errorf("ders seçme hedef body okuma: %w", err)
+		return Status{}, fmt.Errorf("ders seçme hedef body okuma: %w", err)
+	}
+	if isLoginDocument(body) {
+		return Status{}, fmt.Errorf("session_expired")
 	}
 	log.Printf("[dersecme] Hedef sayfa çekildi: %d byte, URL=%s", len(body), resp.Request.URL.String())
-	return searchKeywords(body)
+	found, signal, err := searchKeywords(body)
+	return Status{
+		Open:            found,
+		Signal:          signal,
+		SelectedCourses: parseSelectedCourses(body),
+	}, err
+}
+
+func parseSelectedCourses(body []byte) []SelectedCourse {
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return nil
+	}
+
+	table := selectedCoursesTable(doc)
+	if table == nil {
+		return nil
+	}
+
+	var rows []*html.Node
+	collectElements(table, "tr", &rows)
+	courses := make([]SelectedCourse, 0)
+	for _, row := range rows {
+		cells := directElementChildren(row, "td")
+		if len(cells) < 2 {
+			continue
+		}
+		code := strings.TrimSpace(nodeText(cells[0]))
+		name := strings.TrimSpace(nodeText(cells[1]))
+		if code == "" || name == "" {
+			continue
+		}
+		courses = append(courses, SelectedCourse{Code: code, Name: name})
+	}
+	return courses
+}
+
+func selectedCoursesTable(n *html.Node) *html.Node {
+	if n.Type == html.ElementNode && n.Data == "table" {
+		var headers []*html.Node
+		collectElements(n, "th", &headers)
+		for _, header := range headers {
+			if strings.Contains(normalizeText(nodeText(header)), "sectiginiz dersler") {
+				return n
+			}
+		}
+	}
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		if table := selectedCoursesTable(child); table != nil {
+			return table
+		}
+	}
+	return nil
+}
+
+func collectElements(n *html.Node, tag string, result *[]*html.Node) {
+	if n.Type == html.ElementNode && n.Data == tag {
+		*result = append(*result, n)
+	}
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		collectElements(child, tag, result)
+	}
+}
+
+func directElementChildren(n *html.Node, tag string) []*html.Node {
+	var result []*html.Node
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.ElementNode && child.Data == tag {
+			result = append(result, child)
+		}
+	}
+	return result
+}
+
+func nodeText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(current *html.Node) {
+		if current.Type == html.TextNode {
+			b.WriteString(current.Data)
+			b.WriteByte(' ')
+		}
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(n)
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// isLoginDocument catches Atlas OIS login HTML served with a successful status
+// at the originally requested URL. This happens when another browser invalidates
+// the current session, so checking only the final response URL is insufficient.
+func isLoginDocument(body []byte) bool {
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return false
+	}
+
+	var hasLoginAction, hasUsername, hasPassword, hasCaptcha bool
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "form":
+				hasLoginAction = hasLoginAction || strings.Contains(strings.ToLower(attrValue(n, "action")), "/auth/login")
+			case "input":
+				switch strings.ToLower(attrValue(n, "name")) {
+				case "kullanici_adi":
+					hasUsername = true
+				case "kullanici_sifre":
+					hasPassword = true
+				case "captcha":
+					hasCaptcha = true
+				}
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+
+	if hasLoginAction && hasUsername && hasPassword && hasCaptcha {
+		return true
+	}
+	return strings.Contains(normalizeText(extractAllText(doc)), "oturumunuz farkli bir ekranda acildi")
+}
+
+func attrValue(n *html.Node, key string) string {
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, key) {
+			return attr.Val
+		}
+	}
+	return ""
 }
 
 func findCourseSelectionLinks(body []byte, baseURL *url.URL) ([]string, error) {
@@ -189,8 +348,19 @@ func searchKeywords(body []byte) (found bool, matchedKeyword string, err error) 
 		return false, "", nil
 	}
 
+	// Atlas'ın menüsündeki "Ders Seçme" bağlantısı dönem dışında da kalıcıdır.
+	// Açık sayfayı, ekteki gerçek sayfada bulunan işlem kontrolleri ve kayıt
+	// endpoint'i gibi kullanıcıya ders ekleme/silme yetkisi veren sinyallerle ayır.
+	if hasCourseSelectionControls(allText) {
+		log.Println("[dersecme] ✅ Aktif ders seçme işlem kontrolleri bulundu")
+		return true, "ders seçme işlem kontrolleri", nil
+	}
+
 	for _, kw := range activeKeywords {
 		normalizedKeyword := normalizeText(kw)
+		if isPersistentMenuKeyword(normalizedKeyword) {
+			continue
+		}
 		for _, idx := range findAllIndexes(allText, normalizedKeyword) {
 			snippet := surroundingText(allText, idx, len(normalizedKeyword), 180)
 			if containsInactivePhrase(snippet) {
@@ -204,6 +374,29 @@ func searchKeywords(body []byte) (found bool, matchedKeyword string, err error) 
 
 	log.Println("[dersecme] ❌ Ders seçme ifadesi bulunamadı")
 	return false, "", nil
+}
+
+func hasCourseSelectionControls(text string) bool {
+	for _, signal := range []string{
+		"/ogrenciler/derssecme/ogrderskaydet",
+		"dersial(",
+		"dersisil(",
+		"danismanagonder(",
+	} {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPersistentMenuKeyword(keyword string) bool {
+	switch keyword {
+	case "ders secme", "derssecme", "ders sec":
+		return true
+	default:
+		return false
+	}
 }
 
 // extractAllText bir HTML node ağacındaki tüm metin içeriğini birleştirir.

@@ -9,9 +9,14 @@ import (
 	"time"
 )
 
+var (
+	telegramSendClient = &http.Client{Timeout: 15 * time.Second}
+	telegramPollClient = &http.Client{Timeout: 40 * time.Second}
+)
+
 func SendTelegram(token, chatID, message string) error {
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	resp, err := http.PostForm(endpoint, url.Values{
+	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
 		"chat_id":    {chatID},
 		"text":       {message},
 		"parse_mode": {"Markdown"},
@@ -29,7 +34,7 @@ func SendTelegram(token, chatID, message string) error {
 
 func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive bool) error {
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	
+
 	// Dinamik butonlar
 	pauseText := "⏸ Taramayı Durdur"
 	pauseCmd := "cmd_pause"
@@ -52,7 +57,7 @@ func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive bool) e
 		[{"text": "🔄 Botu Yeniden Başlat", "callback_data": "cmd_restart"}]
 	]}`, dersSecmeText, dersSecmeCmd, pauseText, pauseCmd)
 
-	resp, err := http.PostForm(endpoint, url.Values{
+	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
 		"chat_id":      {chatID},
 		"text":         {message},
 		"parse_mode":   {"Markdown"},
@@ -70,10 +75,13 @@ func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive bool) e
 
 func AnswerCallback(token, callbackQueryID, text string) {
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/answerCallbackQuery", token)
-	http.PostForm(endpoint, url.Values{
+	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
 		"callback_query_id": {callbackQueryID},
 		"text":              {text},
 	})
+	if err == nil {
+		resp.Body.Close()
+	}
 }
 
 func StartPoller(token string, handler func(command, chatID, callbackQueryID string)) {
@@ -81,7 +89,7 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", token)
 	for {
 		reqURL := fmt.Sprintf("%s?offset=%d&timeout=30", endpoint, offset)
-		resp, err := http.Get(reqURL)
+		resp, err := telegramPollClient.Get(reqURL)
 		if err != nil {
 			time.Sleep(5 * time.Second)
 			continue

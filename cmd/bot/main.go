@@ -31,7 +31,10 @@ var (
 	statusMu          sync.RWMutex
 	lastCheckError    string
 	lastCheckAt       time.Time
+	processStartedAt  = time.Now()
 )
+
+const pollerStaleAfter = 10 * time.Minute
 
 func main() {
 	log.SetOutput(os.Stdout)
@@ -46,15 +49,12 @@ func main() {
 		log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
 	}
 
-	// Render üzerindeki bedava "Web Service" planında botun kapanmasını engellemek için:
-	// Render, uygulamanın ayaklanıp bir portu dinlemesini bekler.
-	// Buraya sahte bir sunucu açıyoruz. Eğer dışarıdan bir ping gelirse '200 OK' döner.
-	// Böylece UptimeRobot gibi servislerle 5 dakikada bir ping atıp 7/24 ücretsiz uyandırabilirsin.
+	// Render bir Web Service'in PORT üzerinde dinlemesini bekler. Dışarıdan düzenli
+	// ping almak ücretsiz servisin uyumasını önler; tarama döngüsü kilitlenirse bu
+	// endpoint 503 döndürerek Render sağlık kontrolünün örneği yeniden başlatmasını sağlar.
 	if port := os.Getenv("PORT"); port != "" {
 		go func() {
-			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				w.Write([]byte("OIS Bot is fully awake and running!"))
-			})
+			http.Handle("/", healthHandler())
 			log.Printf("Render Web Service için PORT %s dinleniyor...", port)
 			if err := http.ListenAndServe(":"+port, nil); err != nil {
 				log.Printf("HTTP Sunucu hatası: %v", err)
@@ -175,7 +175,7 @@ func main() {
 
 	// İlk döngü
 	courses, success := run(client, cfg)
-	if success {
+	if success && courses != nil {
 		cacheMu.Lock()
 		cachedCourses = courses
 		cacheMu.Unlock()
@@ -187,17 +187,8 @@ func main() {
 
 	// Rutin döngü
 	for range ticker.C {
-		cacheMu.RLock()
-		paused := isPaused
-		cacheMu.RUnlock()
-
-		if paused {
-			log.Println("Sistem duraklatıldığı için kontrol es geçiliyor...")
-			continue
-		}
-
 		courses, success := run(client, cfg)
-		if success {
+		if success && courses != nil {
 			cacheMu.Lock()
 			cachedCourses = courses
 			cacheMu.Unlock()
@@ -213,6 +204,23 @@ func main() {
 		runtime.GC()
 		debug.FreeOSMemory()
 	}
+}
+
+func healthHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		statusMu.RLock()
+		checkedAt := lastCheckAt
+		statusMu.RUnlock()
+		if checkedAt.IsZero() {
+			checkedAt = processStartedAt
+		}
+		if time.Since(checkedAt) > pollerStaleAfter {
+			http.Error(w, "OIS polling loop is stalled", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OIS Bot is fully awake and running!"))
+	})
 }
 
 func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
@@ -269,6 +277,15 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 	// Ders seçme takibi not sayfasındaki değişikliklerden ve parser hatalarından bağımsızdır.
 	runDersSecmeCheck(client, cfg)
+
+	cacheMu.RLock()
+	paused := isPaused
+	cacheMu.RUnlock()
+	if paused {
+		recordCheckSuccess()
+		log.Println("Not taraması duraklatıldı; ders seçme takibi çalışmaya devam ediyor")
+		return nil, true
+	}
 
 	// Not çek
 	courses, err := scraper.FetchGrades(client, cfg)
@@ -346,19 +363,74 @@ func runDersSecmeCheck(client *http.Client, cfg *config.Config) {
 		return
 	}
 
-	found, keyword, err := dersecme.Check(client, cfg)
+	status, err := dersecme.Inspect(client, cfg)
 	if err != nil {
 		log.Printf("ders seçme kontrol hata: %v", err)
-	} else if found && !notified {
-		msg := fmt.Sprintf("🚨 *DERS SEÇME AKTİF!*\n\nOIS menüsünde \"%s\" ifadesi tespit edildi!\nHemen giriş yap: %s\n\n⏰ Tespit: %s",
-			keyword, cfg.UniversityURL, time.Now().Format("02/01/2006 15:04:05"))
-		notify.SendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg)
-		cacheMu.Lock()
-		dersSecmeNotified = true
-		cacheMu.Unlock()
-	} else if !found {
+		return
+	}
+
+	if status.Open && !notified {
+		msg := fmt.Sprintf("🚨 *DERS SEÇME AKTİF!*\n\nOIS menüsünde \"%s\" ifadesi tespit edildi!%s\n\nHemen giriş yap: %s\n\n⏰ Tespit: %s",
+			status.Signal, formatCurrentSelectedCourses(status.SelectedCourses), cfg.UniversityURL, time.Now().Format("02/01/2006 15:04:05"))
+		if err := notify.SendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
+			log.Printf("ders seçme Telegram bildirim hata; sonraki kontrolde yeniden denenecek: %v", err)
+		} else {
+			cacheMu.Lock()
+			dersSecmeNotified = true
+			cacheMu.Unlock()
+		}
+	} else if !status.Open {
 		cacheMu.Lock()
 		dersSecmeNotified = false
 		cacheMu.Unlock()
 	}
+
+	if status.Open && status.SelectedCourses != nil && cfg.StateFile != "" {
+		stateFile := cfg.StateFile + ".derssecme"
+		changes, err := dersecme.SelectionChanges(status.SelectedCourses, stateFile)
+		if err != nil {
+			log.Printf("ders listesi karşılaştırma hata: %v", err)
+			return
+		}
+		if len(changes) == 0 {
+			return
+		}
+
+		msg := formatSelectionChanges(changes)
+		if err := notify.SendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
+			log.Printf("ders listesi Telegram bildirim hata; sonraki kontrolde yeniden denenecek: %v", err)
+			return
+		}
+		if err := dersecme.SaveSelectionState(status.SelectedCourses, stateFile); err != nil {
+			log.Printf("ders listesi state kaydetme hata: %v", err)
+		}
+	}
+}
+
+func formatCurrentSelectedCourses(courses []dersecme.SelectedCourse) string {
+	if len(courses) == 0 {
+		return ""
+	}
+	var message strings.Builder
+	message.WriteString(fmt.Sprintf("\n\n📚 *OİS'te şu an seçili %d ders var:*", len(courses)))
+	for _, course := range courses {
+		message.WriteString(fmt.Sprintf("\n• %s - %s", course.Code, course.Name))
+	}
+	return message.String()
+}
+
+func formatSelectionChanges(changes []dersecme.SelectionChange) string {
+	var message strings.Builder
+	message.WriteString("🔔 *OİS Ders Listen Değişti!*\n")
+	for _, change := range changes {
+		symbol := "➕"
+		label := "Eklendi"
+		if change.Type == "removed" {
+			symbol = "➖"
+			label = "Silindi"
+		}
+		message.WriteString(fmt.Sprintf("\n%s *%s:* %s - %s", symbol, label, change.Course.Code, change.Course.Name))
+	}
+	message.WriteString("\n\nℹ️ Bu değişikliğin senin işlemin mi yoksa OİS'in otomatik ataması mı olduğu HTML'den ayırt edilemiyor.")
+	return message.String()
 }

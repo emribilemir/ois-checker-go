@@ -7,6 +7,9 @@ Built fully native with Go and executed locally without needing robust web brows
 - **Ultra-Lightweight**: Built on Go HTTP clients & raw HTML parsing.
 - **Tesseract Native Run**: Uses mathematical morphology (erode/dilate) to automatically preprocess and solve image CAPTCHAs.
 - **Interactive Telegram UI**: On-demand grade lookups, metrics overview, and runtime control via Telegram Callback buttons.
+- **Reliable Course-Selection Watch**: Distinguishes the permanent menu link, a genuinely open course-selection page, a closed-period notice, and an expired/conflicting OIS session.
+- **Selected-Course Change Alerts**: Includes the currently selected courses in the opening alert and reports later additions/removals without claiming whether a human or OIS made the change.
+- **Self-Recovering Deploy Health**: Network calls are bounded and the HTTP health endpoint reports a stalled polling loop instead of claiming that a frozen process is healthy.
 - **Docker Ready**: Self-contained configuration supporting persistent data mounting (`/data`).
 
 ## Installation (Docker)
@@ -36,8 +39,12 @@ Deploy this application as a Docker **Web Service**, not as a Cron Job. The bot
 is a continuous process and intentionally does not exit after a single check.
 
 - Set `DERS_SECME_ACTIVE=true` to enable course-selection tracking after every restart.
+- Selected-course snapshots are stored next to `STATE_FILE` with a `.derssecme` suffix. Additions and removals remain detectable across restarts when that storage is persistent.
 - Set `POLL_INTERVAL_SECONDS=300` for five-minute OIS checks.
 - Use `/` as the health-check path.
+- The `/` health check returns `503` when no polling cycle has completed for ten minutes, allowing Render to restart a stuck instance.
+- Telegram's **Taramayı Durdur** button pauses grade checks only; course-selection tracking remains active when enabled separately.
 - Free Render web services still require an external HTTP request at least once
   every 15 minutes to avoid idle spin-down. A 5-10 minute uptime check is suitable.
+- Render can restart a Free instance at any time. The app starts course-selection tracking from `DERS_SECME_ACTIVE` again after each restart.
 - `/data/state.json` is ephemeral on a free instance and can be lost on restart.
