@@ -12,13 +12,14 @@ import (
 )
 
 type Entry struct {
-	Day      time.Weekday
-	Code     string
-	Name     string
-	Location string
-	Start    string
-	End      string
-	Online   bool
+	Day        time.Weekday
+	Code       string
+	Name       string
+	Instructor string
+	Location   string
+	Start      string
+	End        string
+	Online     bool
 }
 
 type Reminder struct {
@@ -38,6 +39,7 @@ func Parse(body []byte) ([]Entry, error) {
 	}
 	var tables []*htmlnode.Node
 	findElements(doc, "table", &tables)
+	instructors := instructorsByCode(tables)
 	for _, table := range tables {
 		rows := tableRows(table)
 		if len(rows) < 2 {
@@ -78,7 +80,7 @@ func Parse(body []byte) ([]Entry, error) {
 					return nil, fmt.Errorf("ders programında geçersiz saat: %q", lines[3])
 				}
 				entries = append(entries, Entry{
-					Day: days[dayIndex], Code: lines[0], Name: lines[1],
+					Day: days[dayIndex], Code: lines[0], Name: lines[1], Instructor: instructors[lines[0]],
 					Location: lines[2], Start: start, End: end,
 					Online: isOnline(lines[2]),
 				})
@@ -129,7 +131,41 @@ func writeDay(out *strings.Builder, entries []Entry, day time.Weekday) {
 			location = "Online"
 		}
 		fmt.Fprintf(out, "%s–%s  %s <b>%s</b>\n     %s\n", entry.Start, entry.End, icon, html.EscapeString(entry.Name), html.EscapeString(location))
+		if entry.Instructor != "" {
+			fmt.Fprintf(out, "     👤 Hoca: %s\n", html.EscapeString(entry.Instructor))
+		}
 	}
+}
+
+func instructorsByCode(tables []*htmlnode.Node) map[string]string {
+	instructors := map[string]string{}
+	for _, table := range tables {
+		rows := tableRows(table)
+		for headerIndex, row := range rows {
+			cells := directCells(row)
+			if len(cells) < 4 || foldTurkish(strings.Join(strings.Fields(nodeText(cells[0])), " ")) != "DERS KODU" || foldTurkish(strings.Join(strings.Fields(nodeText(cells[3])), " ")) != "OGRETIM ELEMANI" {
+				continue
+			}
+			for _, courseRow := range rows[headerIndex+1:] {
+				courseCells := directCells(courseRow)
+				if len(courseCells) < 4 {
+					continue
+				}
+				code := strings.TrimSpace(nodeText(courseCells[0]))
+				name := strings.Join(strings.Fields(nodeText(courseCells[3])), " ")
+				if code == "" || name == "" || name == "-" {
+					continue
+				}
+				if existing := instructors[code]; existing == "" {
+					instructors[code] = name
+				} else if !strings.Contains(" / "+existing+" / ", " / "+name+" / ") {
+					instructors[code] = existing + " / " + name
+				}
+			}
+			return instructors
+		}
+	}
+	return instructors
 }
 
 func Due(entries []Entry, now time.Time, lead time.Duration, sent map[string]bool) []Reminder {

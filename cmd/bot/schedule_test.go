@@ -19,7 +19,7 @@ func TestScheduleServiceSendsOneReminderOnlyWhenEnabled(t *testing.T) {
 	service, err := newScheduleService(path,
 		func() ([]schedule.Entry, error) {
 			fetches++
-			return []schedule.Entry{{Day: time.Monday, Code: "101", Name: "Veri Tabanı", Start: "09:00", End: "12:45", Location: "Online", Online: true}}, nil
+			return []schedule.Entry{{Day: time.Monday, Code: "101", Name: "Veri Tabanı", Start: "09:00", End: "12:45", Location: "Online", Online: true, Instructor: "Dr. A & B"}}, nil
 		},
 		func(message string) error { messages = append(messages, message); return nil },
 	)
@@ -35,7 +35,7 @@ func TestScheduleServiceSendsOneReminderOnlyWhenEnabled(t *testing.T) {
 	if err := service.Check(now); err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 1 || !strings.Contains(messages[0], "Veri Tabanı") || !strings.Contains(messages[0], "09:00") || !strings.Contains(messages[0], "🌐") {
+	if len(messages) != 1 || !strings.Contains(messages[0], "Veri Tabanı") || !strings.Contains(messages[0], "09:00") || !strings.Contains(messages[0], "🌐") || !strings.Contains(messages[0], "Hoca: Dr. A &amp; B") {
 		t.Fatalf("expected one useful class reminder, got %v", messages)
 	}
 	if err := service.Check(now.Add(time.Minute)); err != nil || len(messages) != 1 {

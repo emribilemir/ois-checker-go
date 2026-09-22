@@ -19,7 +19,12 @@ const samplePage = `<html><body><table><tr><td>Kimlik bilgisi</td></tr></table>
 <td><table><tr><td class="bilgi_satir">1410221030<br>Veri Tabanı Sistemleri<br>Vadi Kampüs ONLİNE Online<br>09:00 - 12:45</td></tr><tr><td class="bilgi_satir">1410311021<br>İş Sağlığı ve Güvenliği III<br>Vadi Kampüs ONLINE Online<br>13:00 - 13:45</td></tr></table></td>
 <td><table><tr><td class="bilgi_satir">1410311013<br>Bilgisayar Organizasyonu ve Mimarisi<br>Vadi Kampüs B3-09 3. Kat Tolkien 04<br>12:00 - 14:45</td></tr></table></td>
 <td></td><td></td><td></td><td></td><td></td>
-</tr></table><table><tr><td class="belge_satir">1410221030</td><td class="belge_satir">Veri Tabanı Sistemleri</td></tr></table></body></html>`
+</tr></table><table>
+<tr><td colspan="5">DANIŞMANI: Test</td></tr>
+<tr><td class="sutun_baslik">DERS KODU</td><td class="sutun_baslik">DERS ADI</td><td class="sutun_baslik">SECTION</td><td class="sutun_baslik">ÖĞRETİM ELEMANI</td><td class="sutun_baslik">KREDİ</td></tr>
+<tr><td class="belge_satir">1410311013</td><td class="belge_satir">Bilgisayar Organizasyonu ve Mimarisi</td><td class="belge_satir">1</td><td class="belge_satir">Dr. A &amp; B</td><td class="belge_satir">3</td></tr>
+<tr><td class="belge_satir">1410221030</td><td class="belge_satir">Veri Tabanı Sistemleri</td><td class="belge_satir">1</td><td class="belge_satir">Mustafa ÇORUH</td><td class="belge_satir">3</td></tr>
+</table></body></html>`
 
 func TestParseReadsTimetableAndOnlineLocations(t *testing.T) {
 	entries, err := Parse([]byte(samplePage))
@@ -34,6 +39,16 @@ func TestParseReadsTimetableAndOnlineLocations(t *testing.T) {
 	}
 	if entries[2].Day != time.Tuesday || entries[2].Online || !strings.Contains(entries[2].Location, "B3-09") {
 		t.Fatalf("wrong classroom meeting: %#v", entries[2])
+	}
+}
+
+func TestParseMatchesTeachersByCourseCode(t *testing.T) {
+	entries, err := Parse([]byte(samplePage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries[0].Instructor != "Mustafa ÇORUH" || entries[1].Instructor != "" || entries[2].Instructor != "Dr. A & B" {
+		t.Fatalf("teachers were not matched to the correct timetable entries: %#v", entries)
 	}
 }
 
@@ -66,9 +81,9 @@ func TestParseUsesDayHeadersForReminderDays(t *testing.T) {
 }
 
 func TestFormatWeekKeepsMobileReadableAndEscapesNames(t *testing.T) {
-	entries := []Entry{{Day: time.Monday, Start: "09:00", End: "10:00", Name: "A&B <Lab>", Code: "123", Location: "Online", Online: true}, {Day: time.Tuesday, Start: "12:00", End: "13:00", Name: "Matematik", Location: "B3-09"}}
+	entries := []Entry{{Day: time.Monday, Start: "09:00", End: "10:00", Name: "A&B <Lab>", Code: "123", Location: "Online", Online: true, Instructor: "Dr. A & B"}, {Day: time.Tuesday, Start: "12:00", End: "13:00", Name: "Matematik", Location: "B3-09"}}
 	message := FormatWeek(entries)
-	for _, want := range []string{"<b>Pazartesi</b>", "09:00–10:00", "🌐", "A&amp;B &lt;Lab&gt;", "<b>Salı</b>", "B3-09", "<b>Cuma</b>\n— Ders yok"} {
+	for _, want := range []string{"<b>Pazartesi</b>", "09:00–10:00", "🌐", "A&amp;B &lt;Lab&gt;", "Hoca: Dr. A &amp; B", "<b>Salı</b>", "B3-09", "<b>Cuma</b>\n— Ders yok"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("formatted schedule missing %q: %s", want, message)
 		}

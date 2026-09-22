@@ -139,5 +139,9 @@ func reminderMessage(entry schedule.Entry) string {
 		icon = "🌐"
 		place = "Online"
 	}
-	return fmt.Sprintf("⏰ <b>Ders yakında başlıyor</b>\n\n%s <b>%s</b>\n🕒 %s–%s\n📍 %s", icon, html.EscapeString(entry.Name), entry.Start, entry.End, html.EscapeString(place))
+	message := fmt.Sprintf("⏰ <b>Ders yakında başlıyor</b>\n\n%s <b>%s</b>\n🕒 %s–%s\n📍 %s", icon, html.EscapeString(entry.Name), entry.Start, entry.End, html.EscapeString(place))
+	if entry.Instructor != "" {
+		message += "\n👤 Hoca: " + html.EscapeString(entry.Instructor)
+	}
+	return message
 }

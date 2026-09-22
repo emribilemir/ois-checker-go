@@ -7,7 +7,7 @@ Built fully native with Go and executed locally without needing robust web brows
 - **Ultra-Lightweight**: Built on Go HTTP clients & raw HTML parsing.
 - **Tesseract OCR Ensemble**: Compares multiple live-site-tuned threshold variants and page-segmentation modes, then selects the strongest CAPTCHA reading by confidence and agreement.
 - **Interactive Telegram UI**: On-demand grade lookups, metrics overview, and runtime control via Telegram Callback buttons.
-- **Weekly Timetable**: Fetches the current OIS course schedule on demand and displays each day in a mobile-friendly Telegram message, marking online classes clearly.
+- **Weekly Timetable**: Fetches the current OIS course schedule on demand and displays each day in a mobile-friendly Telegram message with instructor names and clear online-class markers.
 - **Optional Class Reminders**: A separate Telegram toggle sends one alert 15 minutes before each class. The choice and sent-alert history are persisted next to `STATE_FILE`.
 - **Reliable Course-Selection Watch**: Distinguishes the permanent menu link, a genuinely open course-selection page, a closed-period notice, and an expired/conflicting OIS session.
 - **Selected-Course Change Alerts**: Includes the currently selected courses in the opening alert and reports later additions/removals without claiming whether a human or OIS made the change.
