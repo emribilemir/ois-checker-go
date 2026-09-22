@@ -32,7 +32,31 @@ func SendTelegram(token, chatID, message string) error {
 	return nil
 }
 
-func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive bool) error {
+func SendHTML(token, chatID, message string) error {
+	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
+	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
+		"chat_id": {chatID}, "text": {message}, "parse_mode": {"HTML"},
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive, remindersEnabled bool) error {
+	return sendMenu(token, chatID, message, "Markdown", isPaused, isDersSecmeActive, remindersEnabled)
+}
+
+func SendSchedule(token, chatID, message string, isPaused, isDersSecmeActive, remindersEnabled bool) error {
+	return sendMenu(token, chatID, message, "HTML", isPaused, isDersSecmeActive, remindersEnabled)
+}
+
+func sendMenu(token, chatID, message, parseMode string, isPaused, isDersSecmeActive, remindersEnabled bool) error {
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
 
 	// Dinamik butonlar
@@ -49,18 +73,26 @@ func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive bool) e
 		dersSecmeText = "🚫 Ders Seçme Takibi Kapat"
 		dersSecmeCmd = "cmd_ders_secme_off"
 	}
+	reminderText := "🔔 Ders Uyarılarını Aç"
+	reminderCmd := "cmd_reminders_on"
+	if remindersEnabled {
+		reminderText = "🔕 Ders Uyarılarını Kapat"
+		reminderCmd = "cmd_reminders_off"
+	}
 
 	kb := fmt.Sprintf(`{"inline_keyboard": [
 		[{"text": "📖 Anlık Notlar", "callback_data": "cmd_grades"}, {"text": "📊 Sistem Durumu", "callback_data": "cmd_stats"}],
+		[{"text": "📅 Ders Programım", "callback_data": "cmd_schedule"}],
+		[{"text": "%s", "callback_data": "%s"}],
 		[{"text": "%s", "callback_data": "%s"}],
 		[{"text": "%s", "callback_data": "%s"}],
 		[{"text": "🔄 Botu Yeniden Başlat", "callback_data": "cmd_restart"}]
-	]}`, dersSecmeText, dersSecmeCmd, pauseText, pauseCmd)
+	]}`, reminderText, reminderCmd, dersSecmeText, dersSecmeCmd, pauseText, pauseCmd)
 
 	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
 		"chat_id":      {chatID},
 		"text":         {message},
-		"parse_mode":   {"Markdown"},
+		"parse_mode":   {parseMode},
 		"reply_markup": {kb},
 	})
 	if err != nil {
@@ -121,8 +153,8 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 			for _, u := range updateResp.Result {
 				offset = u.UpdateID + 1
 
-				if u.Message != nil && u.Message.Text == "/start" {
-					handler("/start", fmt.Sprintf("%d", u.Message.Chat.ID), "")
+				if u.Message != nil && (u.Message.Text == "/start" || u.Message.Text == "/program") {
+					handler(u.Message.Text, fmt.Sprintf("%d", u.Message.Chat.ID), "")
 				} else if u.CallbackQuery != nil && u.CallbackQuery.Message != nil {
 					handler(u.CallbackQuery.Data, fmt.Sprintf("%d", u.CallbackQuery.Message.Chat.ID), u.CallbackQuery.ID)
 				}

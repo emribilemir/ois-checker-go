@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"notbot/internal/dersecme"
 	"notbot/internal/diff"
 	"notbot/internal/notify"
+	"notbot/internal/schedule"
 	"notbot/internal/scraper"
 	"notbot/internal/session"
 )
@@ -32,6 +34,8 @@ var (
 	lastCheckError    string
 	lastCheckAt       time.Time
 	processStartedAt  = time.Now()
+	oisMu             sync.Mutex
+	remindersActive   atomic.Bool
 )
 
 const (
@@ -46,11 +50,42 @@ func main() {
 	cfg := config.Load()
 	isDersSecmeActive = cfg.DersSecmeActive
 	client := session.New(cfg.UserAgent)
+	scheduleStatePath := ""
+	if cfg.StateFile != "" {
+		scheduleStatePath = cfg.StateFile + ".schedule"
+	}
+	program, err := newScheduleService(scheduleStatePath,
+		func() ([]schedule.Entry, error) { return fetchAuthenticatedSchedule(client, cfg) },
+		func(message string) error {
+			paused, active := controlState()
+			return notify.SendSchedule(cfg.TelegramToken, cfg.TelegramChatID, message, paused, active, true)
+		},
+	)
+	if err != nil {
+		log.Fatalf("ders uyarı durumu okunamadı: %v", err)
+	}
+	remindersActive.Store(program.Enabled())
+	location, err := time.LoadLocation("Europe/Istanbul")
+	if err != nil {
+		log.Fatalf("Europe/Istanbul saat dilimi yüklenemedi: %v", err)
+	}
+	go func() {
+		if err := program.Check(time.Now().In(location)); err != nil {
+			log.Printf("ders uyarı ilk kontrolü başarısız: %v", err)
+		}
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := program.Check(time.Now().In(location)); err != nil {
+				log.Printf("ders uyarı kontrolü başarısız: %v", err)
+			}
+		}
+	}()
 
 	log.Printf("Bot başladı. Kontrol aralığı: %s", cfg.PollInterval)
 
 	msgStr := fmt.Sprintf("🤖 OIS Checker Bot Başladı!\n⏱️ Kontrol Aralığı: %.0f dakika\nNotlarını kontrol etmeye başlıyorum...", cfg.PollInterval.Minutes())
-	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgStr, isPaused, isDersSecmeActive); err != nil {
+	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgStr, isPaused, isDersSecmeActive, remindersEnabled()); err != nil {
 		log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
 	}
 
@@ -77,7 +112,56 @@ func main() {
 		switch cmd {
 		case "/start":
 			paused, active := controlState()
-			notify.SendMenu(cfg.TelegramToken, chatID, fmt.Sprintf("👋 Hoşgeldin! Aşağıdaki menüden istediklerine direkt ulaşabilirsin:\n_(Şu anki rutin kontrol aralığı: %.0f dakikada bir)_", cfg.PollInterval.Minutes()), paused, active)
+			notify.SendMenu(cfg.TelegramToken, chatID, fmt.Sprintf("👋 Hoşgeldin! Aşağıdaki menüden istediklerine direkt ulaşabilirsin:\n_(Şu anki rutin kontrol aralığı: %.0f dakikada bir)_", cfg.PollInterval.Minutes()), paused, active, remindersEnabled())
+
+		case "/program", "cmd_schedule":
+			if cbqID != "" {
+				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Ders programı OİS'ten alınıyor...")
+			}
+			go func() {
+				message, err := program.Show()
+				if err != nil {
+					log.Printf("ders programı alınamadı: %v", err)
+					_ = notify.SendHTML(cfg.TelegramToken, chatID, "⚠️ Ders programı şu an alınamadı. Lütfen biraz sonra tekrar deneyin.\n\n"+html.EscapeString(err.Error()))
+					return
+				}
+				paused, active := controlState()
+				if err := notify.SendSchedule(cfg.TelegramToken, chatID, message, paused, active, remindersEnabled()); err != nil {
+					log.Printf("ders programı Telegram gönderim hatası: %v", err)
+				}
+			}()
+
+		case "cmd_reminders_on", "cmd_reminders_off":
+			enabled := cmd == "cmd_reminders_on"
+			if err := program.SetEnabled(enabled); err != nil {
+				log.Printf("ders uyarı tercihi kaydedilemedi: %v", err)
+				if cbqID != "" {
+					notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tercih kaydedilemedi; tekrar deneyin.")
+				}
+				return
+			}
+			remindersActive.Store(enabled)
+			if cbqID != "" {
+				status := "Ders uyarıları kapatıldı."
+				if enabled {
+					status = "Ders uyarıları açıldı."
+				}
+				notify.AnswerCallback(cfg.TelegramToken, cbqID, status)
+			}
+			paused, active := controlState()
+			message := "🔕 *Ders uyarıları kapatıldı.*"
+			if enabled {
+				message = "🔔 *Ders uyarıları açıldı.* Ders başlamadan 15 dakika önce haber vereceğim."
+			}
+			_ = notify.SendMenu(cfg.TelegramToken, chatID, message, paused, active, enabled)
+			if enabled {
+				go func() {
+					if err := program.Check(time.Now().In(location)); err != nil {
+						log.Printf("ders uyarısı ilk kontrol başarısız: %v", err)
+						_ = notify.SendHTML(cfg.TelegramToken, chatID, "⚠️ Ders uyarıları açık, ancak program şu an OİS'ten alınamadı. Bot yeniden deneyecek.")
+					}
+				}()
+			}
 
 		case "cmd_pause":
 			cacheMu.Lock()
@@ -87,7 +171,7 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tarama duraklatıldı.")
 			}
-			notify.SendMenu(cfg.TelegramToken, chatID, "⏸ *Bot Duraklatıldı.*\nArkaplanda not kontrolü yapılmayacak. Yeniden başlatmak için menüden Devam Et tuşuna basabilirsin.", true, active)
+			notify.SendMenu(cfg.TelegramToken, chatID, "⏸ *Bot Duraklatıldı.*\nArkaplanda not kontrolü yapılmayacak. Yeniden başlatmak için menüden Devam Et tuşuna basabilirsin.", true, active, remindersEnabled())
 
 		case "cmd_resume":
 			cacheMu.Lock()
@@ -97,7 +181,7 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Tarama sürdürülüyor.")
 			}
-			notify.SendMenu(cfg.TelegramToken, chatID, "▶️ *Bot Devam Ediyor.*\nArkaplanda OIS kontrol döngüsü aktif edildi.", false, active)
+			notify.SendMenu(cfg.TelegramToken, chatID, "▶️ *Bot Devam Ediyor.*\nArkaplanda OIS kontrol döngüsü aktif edildi.", false, active, remindersEnabled())
 
 		case "cmd_ders_secme_on":
 			cacheMu.Lock()
@@ -107,7 +191,7 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Ders seçme takibi AKTİF!")
 			}
-			notify.SendMenu(cfg.TelegramToken, chatID, "📋 *Ders Seçme Takibi Aktif Edildi.*\nDers kayıt süreci başladığında anında haber vereceğim.", paused, true)
+			notify.SendMenu(cfg.TelegramToken, chatID, "📋 *Ders Seçme Takibi Aktif Edildi.*\nDers kayıt süreci başladığında anında haber vereceğim.", paused, true, remindersEnabled())
 
 		case "cmd_ders_secme_off":
 			cacheMu.Lock()
@@ -118,7 +202,7 @@ func main() {
 			if cbqID != "" {
 				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Ders seçme takibi KAPATILDI.")
 			}
-			notify.SendMenu(cfg.TelegramToken, chatID, "🚫 *Ders Seçme Takibi Kapatıldı.*", paused, false)
+			notify.SendMenu(cfg.TelegramToken, chatID, "🚫 *Ders Seçme Takibi Kapatıldı.*", paused, false, remindersEnabled())
 
 		case "cmd_restart":
 			if cbqID != "" {
@@ -139,7 +223,7 @@ func main() {
 			}
 			stats := notify.GetSystemStats(cfg.PollInterval, atomic.LoadInt64(&checkCount))
 			paused, active := controlState()
-			notify.SendMenu(cfg.TelegramToken, chatID, stats, paused, active)
+			notify.SendMenu(cfg.TelegramToken, chatID, stats, paused, active, remindersEnabled())
 		case "cmd_grades":
 			cacheMu.RLock()
 			courses := cachedCourses
@@ -168,7 +252,7 @@ func main() {
 						msgBuilder.WriteString(fmt.Sprintf("   • %s%s: *%s*\n", comp.Name, weight, comp.Score))
 					}
 				}
-				notify.SendMenu(cfg.TelegramToken, chatID, msgBuilder.String(), paused, active)
+				notify.SendMenu(cfg.TelegramToken, chatID, msgBuilder.String(), paused, active, remindersEnabled())
 			}
 		}
 	})
@@ -246,12 +330,14 @@ func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
 	msgBuilder.WriteString("\n_(Sistem takibe devam ediyor...)_")
 
 	paused, active := controlState()
-	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgBuilder.String(), paused, active); err != nil {
+	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msgBuilder.String(), paused, active, remindersEnabled()); err != nil {
 		log.Printf("İlk not durumu Telegram gönderim hatası: %v", err)
 	}
 }
 
 func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
+	oisMu.Lock()
+	defer oisMu.Unlock()
 	atomic.AddInt64(&checkCount, 1)
 	loginOK, failureReason := tryLogin(client, cfg, auth.Login, time.Sleep)
 	if !loginOK {
@@ -333,7 +419,7 @@ func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course
 	// Bildirim
 	msg := diff.FormatMessage(changes)
 	paused, active := controlState()
-	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msg, paused, active); err != nil {
+	if err := notify.SendMenu(cfg.TelegramToken, cfg.TelegramChatID, msg, paused, active, remindersEnabled()); err != nil {
 		log.Printf("telegram hata: %v", err)
 	} else {
 		log.Printf("bildirim gönderildi: %d değişiklik", len(changes))
