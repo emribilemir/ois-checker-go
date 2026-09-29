@@ -148,6 +148,24 @@ func TestInspectKeepsAnEmptySelectedCoursesTableObservable(t *testing.T) {
 	}
 }
 
+func TestInspectDiscoversElectivePoolLinks(t *testing.T) {
+	client := &http.Client{Transport: dersecmeRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `<a href="/ogrenciler/derssecme/ogrindex">Ders Seçme</a>`
+		if req.URL.Path == "/ogrenciler/derssecme/ogrindex" {
+			body = `<script>function dersiAl(){}; var url="/ogrenciler/derssecme/ogrderskaydet";</script>` +
+				`<input value="Ders Seç" onclick="popUp2('/ogrenciler/derssecme/popderssecme/havuz_id/319/ogrenci_slot_id/555925',800,800)">`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	status, err := Inspect(client, &config.Config{UniversityURL: "https://ois.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.PoolPaths) != 1 || status.PoolPaths[0] != "/ogrenciler/derssecme/popderssecme/havuz_id/319/ogrenci_slot_id/555925" {
+		t.Fatalf("pool link not discovered: %#v", status.PoolPaths)
+	}
+}
+
 func TestSearchKeywordsIgnoresEndedCourseSelectionNotice(t *testing.T) {
 	body := []byte(`<font size="5" color="red">DEĞERLİ ÖĞRENCİMİZ, DERS SEÇİMLERİ SONA ERMİŞTİR, DERS SEÇME İŞLEMİ İÇİN DANIŞMANINIZLA İLETİŞİME GEÇİNİZ.</font>`)
 

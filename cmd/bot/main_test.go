@@ -376,6 +376,53 @@ func TestRunDersSecmeCheckNotifiesWhenOISAddsACourseToTheSelectedList(t *testing
 	}
 }
 
+func TestRunDersSecmeCheckAlertsOnNewElectiveWithoutPostingToOIS(t *testing.T) {
+	const poolPath = "/ogrenciler/derssecme/popderssecme/havuz_id/319/ogrenci_slot_id/555925"
+	poolRows := `<tr><td>SEC101</td><td>Siber Güvenlik</td><td>3</td><td>5</td><td>2</td><td><input value="Dersi Al"></td></tr>` +
+		`<tr><td>SEC999</td><td>Zaten Seçili</td><td>3</td><td>5</td><td>8</td><td><input value="Dersi Al"></td></tr>`
+	oisClient := &http.Client{Transport: mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("bot attempted mutation: %s %s", req.Method, req.URL)
+		}
+		body := `<a href="/ogrenciler/derssecme/ogrindex">Ders Seçme</a>`
+		switch req.URL.Path {
+		case "/ogrenciler/derssecme/ogrindex":
+			body = `<script>function dersiAl(){}; var url="/ogrenciler/derssecme/ogrderskaydet";</script>` +
+				`<table><tr><th>Seçtiğiniz Dersler</th></tr><tr><td>SEC999</td><td>Zaten Seçili</td></tr></table>`
+		case poolPath:
+			body = `<table><tr><th>Ders Kodu</th><th>Ders Adı</th><th>Kredi</th><th>AKTS</th><th>Kalan Kota</th><th></th></tr>` + poolRows + `</table>`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	var messages []string
+	previousTransport := http.DefaultTransport
+	http.DefaultTransport = mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		messages = append(messages, req.Form.Get("text"))
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Request: req}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+	previousActive, previousNotified := isDersSecmeActive, dersSecmeNotified
+	isDersSecmeActive, dersSecmeNotified = true, false
+	t.Cleanup(func() { isDersSecmeActive, dersSecmeNotified = previousActive, previousNotified })
+	cfg := &config.Config{UniversityURL: "https://ois.example", UserAgent: "test-agent", TelegramToken: "token", TelegramChatID: "123", StateFile: filepath.Join(t.TempDir(), "state.json"), ElectivePoolPaths: []string{poolPath}}
+	runDersSecmeCheck(oisClient, cfg)
+	if len(messages) != 2 || !strings.Contains(messages[1], "SEC101") || strings.Contains(messages[1], "SEC999") || !strings.Contains(messages[1], "online bilgisi") {
+		t.Fatalf("expected initial elective alert with honest online status, got %#v", messages)
+	}
+	runDersSecmeCheck(oisClient, cfg)
+	if len(messages) != 2 {
+		t.Fatalf("unchanged pool produced duplicate notification: %#v", messages)
+	}
+	poolRows += `<tr><td>SEC102</td><td>Yeni Seçmeli A&amp;B &lt;X&gt;</td><td>3</td><td>5</td><td>4</td><td><input value="Dersi Al"></td></tr>`
+	runDersSecmeCheck(oisClient, cfg)
+	if len(messages) != 3 || !strings.Contains(messages[2], "SEC102") || !strings.Contains(messages[2], "A&amp;B &lt;X&gt;") || strings.Contains(messages[2], "SEC101") {
+		t.Fatalf("expected only newly available course, got %#v", messages)
+	}
+}
+
 func TestHealthHandlerRejectsAStalledPollingLoop(t *testing.T) {
 	statusMu.Lock()
 	previousCheckAt := lastCheckAt

@@ -11,6 +11,7 @@ Built fully native with Go and executed locally without needing robust web brows
 - **Optional Class Reminders**: A separate Telegram toggle sends one alert 15 minutes before each class. The choice and sent-alert history are persisted next to `STATE_FILE`.
 - **Reliable Course-Selection Watch**: Distinguishes the permanent menu link, a genuinely open course-selection page, a closed-period notice, and an expired/conflicting OIS session.
 - **Selected-Course Change Alerts**: Includes the currently selected courses in the opening alert and reports later additions/removals without claiming whether a human or OIS made the change.
+- **Elective Pool Availability Alerts**: Reads the observed Bölüm Seçmeli pool and any pool links visible on the course-selection page. Sends an alert for courses with open seats on the first scan and when a new course appears or a full course reopens. The pool page does not expose online status, so alerts explicitly say that teaching mode is unverified. The bot only sends GET requests to pool pages and never enrolls in or drops courses.
 - **Self-Recovering Deploy Health**: Network calls are bounded and the HTTP health endpoint reports a stalled polling loop instead of claiming that a frozen process is healthy.
 - **Docker Ready**: Self-contained configuration supporting persistent data mounting (`/data`).
 
@@ -42,6 +43,7 @@ is a continuous process and intentionally does not exit after a single check.
 
 - Set `DERS_SECME_ACTIVE=true` to enable course-selection tracking after every restart.
 - Selected-course snapshots are stored next to `STATE_FILE` with a `.derssecme` suffix. Additions and removals remain detectable across restarts when that storage is persistent.
+- Elective pool snapshots are stored next to `STATE_FILE` with an `.electives` suffix. `ELECTIVE_POOL_PATHS` defaults to the observed Bölüm Seçmeli pool path; add other comma-separated pool paths when available. The bot also discovers pool paths from visible "Ders Seç" buttons.
 - Set `POLL_INTERVAL_SECONDS=300` for five-minute OIS checks.
 - Use `/` as the health-check path.
 - The `/` health check returns `503` when no polling cycle has completed for ten minutes, allowing Render to restart a stuck instance.

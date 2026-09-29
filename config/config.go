@@ -9,15 +9,16 @@ import (
 )
 
 type Config struct {
-	UniversityURL   string
-	Username        string
-	Password        string
-	TelegramToken   string
-	TelegramChatID  string
-	PollInterval    time.Duration
-	StateFile       string
-	UserAgent       string
-	DersSecmeActive bool
+	UniversityURL     string
+	Username          string
+	Password          string
+	TelegramToken     string
+	TelegramChatID    string
+	PollInterval      time.Duration
+	StateFile         string
+	UserAgent         string
+	DersSecmeActive   bool
+	ElectivePoolPaths []string
 }
 
 func Load() *Config {
@@ -30,16 +31,27 @@ func Load() *Config {
 		log.Fatal("DERS_SECME_ACTIVE geçersiz")
 	}
 	return &Config{
-		UniversityURL:   mustGetEnv("UNIVERSITY_URL"),
-		Username:        mustGetEnv("UNIVERSITY_USER"),
-		Password:        mustGetEnv("UNIVERSITY_PASS"),
-		TelegramToken:   mustGetEnv("TELEGRAM_TOKEN"),
-		TelegramChatID:  mustGetEnv("TELEGRAM_CHAT_ID"),
-		PollInterval:    time.Duration(intervalSec) * time.Second,
-		StateFile:       getEnv("STATE_FILE", "/data/state.json"),
-		UserAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-		DersSecmeActive: dersSecmeActive,
+		UniversityURL:     mustGetEnv("UNIVERSITY_URL"),
+		Username:          mustGetEnv("UNIVERSITY_USER"),
+		Password:          mustGetEnv("UNIVERSITY_PASS"),
+		TelegramToken:     mustGetEnv("TELEGRAM_TOKEN"),
+		TelegramChatID:    mustGetEnv("TELEGRAM_CHAT_ID"),
+		PollInterval:      time.Duration(intervalSec) * time.Second,
+		StateFile:         getEnv("STATE_FILE", "/data/state.json"),
+		UserAgent:         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		DersSecmeActive:   dersSecmeActive,
+		ElectivePoolPaths: splitPoolPaths(getEnv("ELECTIVE_POOL_PATHS", "/ogrenciler/derssecme/popderssecme/havuz_id/319/ogrenci_slot_id/555925")),
 	}
+}
+
+func splitPoolPaths(raw string) []string {
+	var paths []string
+	for _, path := range strings.Split(raw, ",") {
+		if path = strings.TrimSpace(path); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func mustGetEnv(key string) string {

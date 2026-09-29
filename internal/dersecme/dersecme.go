@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -71,7 +72,10 @@ type Status struct {
 	Open            bool
 	Signal          string
 	SelectedCourses []SelectedCourse
+	PoolPaths       []string
 }
+
+var popupPoolPattern = regexp.MustCompile(`popUp2\(['"]([^'"]+)['"]`)
 
 // Check OIS ana sayfasındaki sidebar menüsünü kontrol eder.
 // Ders seçme ile ilgili bir ifade bulunursa (found=true, matchedKeyword) döner.
@@ -151,7 +155,31 @@ func inspectCourseSelectionPage(client *http.Client, cfg *config.Config, targetU
 		Open:            found,
 		Signal:          signal,
 		SelectedCourses: parseSelectedCourses(body),
+		PoolPaths:       parsePoolPaths(body),
 	}, err
+}
+
+func parsePoolPaths(body []byte) []string {
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var paths []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			if match := popupPoolPattern.FindStringSubmatch(attrValue(n, "onclick")); len(match) == 2 && poolPathPattern.MatchString(match[1]) && !seen[match[1]] {
+				seen[match[1]] = true
+				paths = append(paths, match[1])
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	return paths
 }
 
 func parseSelectedCourses(body []byte) []SelectedCourse {

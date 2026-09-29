@@ -499,17 +499,65 @@ func runDersSecmeCheck(client *http.Client, cfg *config.Config) {
 			log.Printf("ders listesi karşılaştırma hata: %v", err)
 			return
 		}
-		if len(changes) == 0 {
-			return
+		if len(changes) > 0 {
+			msg := formatSelectionChanges(changes)
+			if err := notify.SendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
+				log.Printf("ders listesi Telegram bildirim hata; sonraki kontrolde yeniden denenecek: %v", err)
+			} else if err := dersecme.SaveSelectionState(status.SelectedCourses, stateFile); err != nil {
+				log.Printf("ders listesi state kaydetme hata: %v", err)
+			}
 		}
+	}
+	if status.Open && cfg.StateFile != "" {
+		checkElectivePools(client, cfg, status.PoolPaths, status.SelectedCourses)
+	}
+}
 
-		msg := formatSelectionChanges(changes)
-		if err := notify.SendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
-			log.Printf("ders listesi Telegram bildirim hata; sonraki kontrolde yeniden denenecek: %v", err)
-			return
+func checkElectivePools(client *http.Client, cfg *config.Config, discovered []string, selected []dersecme.SelectedCourse) {
+	stateFile := cfg.StateFile + ".electives"
+	state, err := dersecme.LoadPoolState(stateFile)
+	if err != nil {
+		log.Printf("seçmeli havuz durumu okuma hata: %v", err)
+		return
+	}
+	seen := make(map[string]bool)
+	selectedCodes := make(map[string]bool, len(selected))
+	for _, course := range selected {
+		selectedCodes[course.Code] = true
+	}
+	for _, poolPath := range append(append([]string(nil), cfg.ElectivePoolPaths...), discovered...) {
+		if seen[poolPath] {
+			continue
 		}
-		if err := dersecme.SaveSelectionState(status.SelectedCourses, stateFile); err != nil {
-			log.Printf("ders listesi state kaydetme hata: %v", err)
+		seen[poolPath] = true
+		courses, err := dersecme.FetchPool(client, cfg, poolPath)
+		if err != nil {
+			log.Printf("seçmeli havuz %s okunamadı: %v", poolPath, err)
+			continue
+		}
+		available := dersecme.NewlyAvailable(state[poolPath], courses)
+		filtered := available[:0]
+		for _, course := range available {
+			if !selectedCodes[course.Code] {
+				filtered = append(filtered, course)
+			}
+		}
+		available = filtered
+		if len(available) > 0 {
+			var msg strings.Builder
+			msg.WriteString("🔔 <b>Seçmeli ders havuzunda yer var:</b>\n")
+			for _, course := range available {
+				msg.WriteString(fmt.Sprintf("\n• %s - %s (kalan kota: %d)", html.EscapeString(course.Code), html.EscapeString(course.Name), course.Quota))
+			}
+			msg.WriteString("\n\nBu havuzda online bilgisi gösterilmiyor; öğretim şeklini doğrulamak gerekiyor.")
+			if err := notify.SendHTML(cfg.TelegramToken, cfg.TelegramChatID, msg.String()); err != nil {
+				log.Printf("seçmeli havuz bildirim hata; sonraki kontrolde yeniden denenecek: %v", err)
+				continue
+			}
+		}
+		state[poolPath] = courses
+		if err := dersecme.SavePoolState(stateFile, state); err != nil {
+			log.Printf("seçmeli havuz durumu kaydetme hata: %v", err)
 		}
 	}
 }
