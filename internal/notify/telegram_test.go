@@ -23,7 +23,7 @@ func TestScheduleMessageUsesHTMLAndReminderControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if values.Get("parse_mode") != "HTML" || !strings.Contains(values.Get("reply_markup"), "cmd_schedule") || !strings.Contains(values.Get("reply_markup"), "cmd_reminders_off") {
+		if values.Get("parse_mode") != "HTML" || !strings.Contains(values.Get("reply_markup"), "cmd_schedule") || !strings.Contains(values.Get("reply_markup"), "cmd_exams") || !strings.Contains(values.Get("reply_markup"), "cmd_reminders_off") {
 			t.Errorf("schedule message missing HTML mode or controls: %v", values)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Request: req}, nil
@@ -51,5 +51,16 @@ func TestSendTelegramSetsARequestDeadline(t *testing.T) {
 
 	if err := SendTelegram("token", "123", "message"); err != nil {
 		t.Fatalf("expected a bounded Telegram request, got %v", err)
+	}
+}
+
+func TestCommandNameAcceptsExamCommands(t *testing.T) {
+	for text, want := range map[string]string{"/sinav": "/sinav", "/Sinavlar@NotBot": "/sinavlar", "/program": "/program", "merhaba": "merhaba"} {
+		if got := commandName(text); got != want {
+			t.Fatalf("commandName(%q) = %q, want %q", text, got, want)
+		}
+	}
+	if !isCommand("/sinav") || !isCommand("/sinavlar@NotBot") || isCommand("/sil") {
+		t.Fatal("exam commands must be accepted and unknown commands ignored")
 	}
 }

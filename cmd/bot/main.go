@@ -131,6 +131,23 @@ func main() {
 				}
 			}()
 
+		case "/sinav", "/sinavlar", "cmd_exams":
+			if cbqID != "" {
+				notify.AnswerCallback(cfg.TelegramToken, cbqID, "Sınav takvimi OİS'ten alınıyor...")
+			}
+			go func() {
+				message, err := fetchExamCalendar(client, cfg, time.Now().In(location))
+				if err != nil {
+					log.Printf("sınav takvimi alınamadı: %v", err)
+					_ = notify.SendHTML(cfg.TelegramToken, chatID, "⚠️ Sınav takvimi şu an alınamadı.\n\n"+html.EscapeString(err.Error()))
+					return
+				}
+				paused, active := controlState()
+				if err := notify.SendSchedule(cfg.TelegramToken, chatID, message, paused, active, remindersEnabled()); err != nil {
+					log.Printf("sınav takvimi Telegram gönderim hatası: %v", err)
+				}
+			}()
+
 		case "cmd_reminders_on", "cmd_reminders_off":
 			enabled := cmd == "cmd_reminders_on"
 			if err := program.SetEnabled(enabled); err != nil {

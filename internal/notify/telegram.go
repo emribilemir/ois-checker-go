@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -82,7 +83,7 @@ func sendMenu(token, chatID, message, parseMode string, isPaused, isDersSecmeAct
 
 	kb := fmt.Sprintf(`{"inline_keyboard": [
 		[{"text": "📖 Anlık Notlar", "callback_data": "cmd_grades"}, {"text": "📊 Sistem Durumu", "callback_data": "cmd_stats"}],
-		[{"text": "📅 Ders Programım", "callback_data": "cmd_schedule"}],
+		[{"text": "📅 Ders Programım", "callback_data": "cmd_schedule"}, {"text": "📝 Sınav Takvimim", "callback_data": "cmd_exams"}],
 		[{"text": "%s", "callback_data": "%s"}],
 		[{"text": "%s", "callback_data": "%s"}],
 		[{"text": "%s", "callback_data": "%s"}],
@@ -153,8 +154,8 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 			for _, u := range updateResp.Result {
 				offset = u.UpdateID + 1
 
-				if u.Message != nil && (u.Message.Text == "/start" || u.Message.Text == "/program") {
-					handler(u.Message.Text, fmt.Sprintf("%d", u.Message.Chat.ID), "")
+				if u.Message != nil && isCommand(u.Message.Text) {
+					handler(commandName(u.Message.Text), fmt.Sprintf("%d", u.Message.Chat.ID), "")
 				} else if u.CallbackQuery != nil && u.CallbackQuery.Message != nil {
 					handler(u.CallbackQuery.Data, fmt.Sprintf("%d", u.CallbackQuery.Message.Chat.ID), u.CallbackQuery.ID)
 				}
@@ -163,3 +164,17 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 		resp.Body.Close()
 	}
 }
+
+var commands = map[string]bool{"/start": true, "/program": true, "/sinav": true, "/sinavlar": true}
+
+// commandName "/sinav@BotAdi" gibi grup biçimini ve büyük harfi sadeleştirir.
+func commandName(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	name, _, _ := strings.Cut(strings.ToLower(fields[0]), "@")
+	return name
+}
+
+func isCommand(text string) bool { return commands[commandName(text)] }
