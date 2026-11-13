@@ -26,13 +26,16 @@ import (
 
 // Exam takvimdeki tek bir sınavdır.
 type Exam struct {
-	Code  string
-	Name  string
-	Kind  string
-	Date  time.Time // yalnız gün; saat Start alanında
-	Start string
-	End   string
-	Place string
+	Code       string
+	Name       string
+	Kind       string
+	Date       time.Time // yalnız gün; saat Start alanında
+	Start      string
+	End        string
+	Place      string
+	Campus     string
+	Instructor string
+	Note       string
 }
 
 // calendarPath Atlas OİS'teki sınav programı sayfasıdır. OİS bilinmeyen
@@ -202,7 +205,9 @@ func isExamSignal(text string) bool {
 	return false
 }
 
-type columns struct{ date, clock, end, course, code, kind, place int }
+type columns struct {
+	date, clock, end, course, code, kind, place, campus, instructor, note int
+}
 
 // Parse sınav takvimi tablosunu okur. ok=false ise sayfada tanınan bir sınav
 // tablosu yoktur; headers tanı için görülen tablo başlıklarıdır.
@@ -223,8 +228,9 @@ func Parse(body []byte) (exams []Exam, headers []string, ok bool) {
 			}
 			cols, recognised := mapColumns(labels)
 			if !recognised {
-				if headerIndex == 0 && len(labels) > 1 && hasHeaderCells(row) {
-					headers = appendUnique(headers, strings.Join(nonEmpty(labels), ", "))
+				if names := headerNames(row); len(names) > 1 {
+					// Yalnız <th> metni: kimlik bilgisi satırlarında değerler <td>'dedir.
+					headers = appendUnique(headers, strings.Join(names, ", "))
 				}
 				continue
 			}
@@ -244,13 +250,19 @@ func Parse(body []byte) (exams []Exam, headers []string, ok bool) {
 }
 
 func mapColumns(labels []string) (columns, bool) {
-	cols := columns{-1, -1, -1, -1, -1, -1, -1}
+	cols := columns{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 	for i, label := range labels {
 		f := fold(label)
 		switch {
 		case f == "":
 		case strings.Contains(f, "aciklanma"):
 			// Not sayfasının "Açıklanma Tarihi" sütunu sınav tarihi değildir.
+		case strings.Contains(f, "kampus") && cols.campus < 0:
+			cols.campus = i
+		case (strings.Contains(f, "ogretim") || strings.Contains(f, "eleman") || strings.Contains(f, "hoca")) && cols.instructor < 0:
+			cols.instructor = i
+		case (strings.Contains(f, "aciklama") || strings.Contains(f, "not")) && cols.note < 0:
+			cols.note = i
 		case strings.Contains(f, "tarih") && cols.date < 0:
 			cols.date = i
 			if strings.Contains(f, "saat") && cols.clock < 0 {
@@ -295,7 +307,8 @@ func parseRows(rows []*html.Node, cols columns) []Exam {
 		if !ok {
 			continue
 		}
-		exam := Exam{Date: date, Name: value(cols.course), Code: value(cols.code), Kind: value(cols.kind), Place: value(cols.place)}
+		exam := Exam{Date: date, Name: value(cols.course), Code: value(cols.code), Kind: value(cols.kind), Place: value(cols.place),
+			Campus: value(cols.campus), Instructor: value(cols.instructor), Note: value(cols.note)}
 		if exam.Code == "" {
 			if match := codePattern.FindStringSubmatch(exam.Name); match != nil {
 				exam.Code, exam.Name = strings.TrimSpace(match[1]), strings.TrimSpace(match[2])
@@ -397,8 +410,14 @@ func Format(exams []Exam, now time.Time) string {
 			out.WriteString(" (" + html.EscapeString(exam.Kind) + ")")
 		}
 		out.WriteString("\n")
-		if exam.Place != "" {
-			out.WriteString("   📍 " + html.EscapeString(exam.Place) + "\n")
+		if place := joinNonEmpty(" · ", exam.Place, exam.Campus); place != "" {
+			out.WriteString("   📍 " + html.EscapeString(place) + "\n")
+		}
+		if exam.Instructor != "" {
+			out.WriteString("   👤 " + html.EscapeString(exam.Instructor) + "\n")
+		}
+		if exam.Note != "" {
+			out.WriteString("   ℹ️ " + html.EscapeString(exam.Note) + "\n")
 		}
 	}
 	if past > 0 {
@@ -440,23 +459,26 @@ func appendUnique(list []string, value string) []string {
 	return append(list, value)
 }
 
-func nonEmpty(values []string) []string {
+func joinNonEmpty(separator string, values ...string) string {
 	var out []string
 	for _, v := range values {
 		if v != "" {
 			out = append(out, v)
 		}
 	}
-	return out
+	return strings.Join(out, separator)
 }
 
-func hasHeaderCells(row *html.Node) bool {
+func headerNames(row *html.Node) []string {
+	var names []string
 	for child := row.FirstChild; child != nil; child = child.NextSibling {
 		if child.Type == html.ElementNode && child.Data == "th" {
-			return true
+			if name := cleanText(nodeText(child)); name != "" && !strings.ContainsAny(name, "0123456789") {
+				names = append(names, name)
+			}
 		}
 	}
-	return false
+	return names
 }
 
 func attr(n *html.Node, key string) string {

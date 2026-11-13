@@ -193,3 +193,71 @@ func TestFetchTreatsLogoutRedirectAsExpiredSession(t *testing.T) {
 		t.Fatalf("expected ErrSessionExpired, got %v", err)
 	}
 }
+
+// atlasPage, Atlas OİS sınav programı sayfasının düzenini izler. Kimlik değerleri sahtedir.
+func atlasPage(rows string) []byte {
+	return []byte(`<html><body>
+		<h3>SINAV PROGRAMI</h3>
+		<table>
+			<tr><th>TC Kimlik No</th><td>00000000000</td><th>Fakülte</th><td>05-MÜHENDİSLİK VE DOĞA BİLİMLERİ FAKÜLTESİ</td></tr>
+			<tr><th>Adı</th><td>DENEME</td><th>Bölüm/Program</th><td>0501-BİLGİSAYAR MÜHENDİSLİĞİ BÖLÜMÜ</td></tr>
+			<tr><th>Soyadı</th><td>ÖĞRENCİ</td><th>Akademik Yıl</th><td>2026-2027</td></tr>
+			<tr><th>Sınıfı</th><td>3</td><th>Dönem</th><td>Güz</td></tr>
+		</table>
+		<table>
+			<tr><th>SINAV TİPİ</th><th>DERS KODU</th><th>DERS ADI</th><th>TARİH - SAAT</th><th>KAMPÜS</th><th>DERSLİK</th><th>ÖĞRETİM ELEMANI</th><th>Açıklama</th></tr>
+			` + rows + `
+		</table>
+	</body></html>`)
+}
+
+func TestParseAtlasExamProgramme(t *testing.T) {
+	exams, _, ok := Parse(atlasPage(`
+		<tr><td>Final</td><td>BLM305</td><td>VERİTABANI YÖNETİM SİSTEMLERİ</td><td>05.01.2027 10:00</td><td>Kağıthane</td><td>A-201</td><td>Dr. Öğr. Üyesi Deneme</td><td>Kitap kapalı</td></tr>
+		<tr><td>Ara Sınav</td><td>BLM307</td><td>ROBOTİK</td><td>20.11.2026 13:30</td><td>Kağıthane</td><td>B-105</td><td>Prof. Dr. Deneme</td><td></td></tr>`))
+	if !ok || len(exams) != 2 {
+		t.Fatalf("expected two exams, ok=%v exams=%#v", ok, exams)
+	}
+	first := exams[0]
+	if first.Kind != "Ara Sınav" || first.Code != "BLM307" || first.Name != "ROBOTİK" || first.Start != "13:30" ||
+		first.Campus != "Kağıthane" || first.Place != "B-105" || first.Instructor != "Prof. Dr. Deneme" {
+		t.Fatalf("unexpected first exam: %#v", first)
+	}
+	if exams[1].Note != "Kitap kapalı" || !exams[1].Date.Equal(time.Date(2027, 1, 5, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected second exam: %#v", exams[1])
+	}
+
+	message := Format(exams, time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC))
+	for _, want := range []string{"🕒 13:30  <b>ROBOTİK</b> (Ara Sınav)", "📍 B-105 · Kağıthane", "👤 Prof. Dr. Deneme", "ℹ️ Kitap kapalı"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message missing %q:\n%s", want, message)
+		}
+	}
+}
+
+func TestParseEmptyAtlasExamProgramme(t *testing.T) {
+	exams, _, ok := Parse(atlasPage(""))
+	if !ok || len(exams) != 0 {
+		t.Fatalf("an empty programme is a valid calendar, ok=%v exams=%#v", ok, exams)
+	}
+	if message := Format(exams, time.Now()); !strings.Contains(message, "henüz sınav yok") {
+		t.Fatalf("unexpected message: %s", message)
+	}
+}
+
+func TestDiagnosticsNeverIncludeStudentDetails(t *testing.T) {
+	page := strings.Replace(string(atlasPage("")), "TARİH - SAAT", "ZAMAN", 1)
+	_, headers, ok := Parse([]byte(page))
+	if ok {
+		t.Fatal("a table without a date column must not be recognised")
+	}
+	joined := strings.Join(headers, " | ")
+	for _, private := range []string{"00000000000", "DENEME", "ÖĞRENCİ", "2026-2027"} {
+		if strings.Contains(joined, private) {
+			t.Fatalf("diagnostics leaked %q: %s", private, joined)
+		}
+	}
+	if !strings.Contains(joined, "SINAV TİPİ") {
+		t.Fatalf("expected exam table headers in diagnostics, got %s", joined)
+	}
+}
