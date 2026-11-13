@@ -592,3 +592,69 @@ func TestMessagesFromOtherChatsAreIgnored(t *testing.T) {
 		t.Fatalf("answered a stranger: %#v", *calls)
 	}
 }
+
+// runWithFakes runs one polling cycle with a fake session check and login.
+// gradeBodies are served in order for the grade page; the last one repeats.
+func runWithFakes(t *testing.T, sessionActive bool, gradeBodies ...string) (logins int, courses []scraper.Course, ok bool) {
+	t.Helper()
+	gradeRequests := 0
+	client := &http.Client{Transport: mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := gradeBodies[len(gradeBodies)-1]
+		if gradeRequests < len(gradeBodies) {
+			body = gradeBodies[gradeRequests]
+		}
+		gradeRequests++
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/html; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	previousCheck, previousLogin := checkSession, loginFn
+	checkSession = func(*http.Client, *config.Config) (bool, string) { return sessionActive, "test" }
+	loginFn = func(*http.Client, *config.Config) (auth.LoginResult, error) {
+		logins++
+		return auth.LoginResult{Success: true}, nil
+	}
+	cacheMu.Lock()
+	previousPaused, previousActive := isPaused, isDersSecmeActive
+	isPaused, isDersSecmeActive = false, false
+	cacheMu.Unlock()
+	t.Cleanup(func() {
+		checkSession, loginFn = previousCheck, previousLogin
+		cacheMu.Lock()
+		isPaused, isDersSecmeActive = previousPaused, previousActive
+		cacheMu.Unlock()
+	})
+	cfg := &config.Config{UniversityURL: "https://ois.example", UserAgent: "test-agent", StateFile: filepath.Join(t.TempDir(), "state.json")}
+	courses, ok = run(client, cfg)
+	return logins, courses, ok
+}
+
+const cycleGradeHTML = `<table class="a4"><tr><th>Etki</th><th>101 - Test Dersi</th><th>Puan</th><th>Tarih</th></tr><tr><td>%100</td><td>Final</td><td>80</td><td>01/08/2026</td></tr></table>`
+
+func TestRunReusesAnOpenSessionWithoutCaptchaLogin(t *testing.T) {
+	logins, courses, ok := runWithFakes(t, true, cycleGradeHTML)
+	if !ok || len(courses) != 1 || logins != 0 {
+		t.Fatalf("expected grades without logging in, ok=%v courses=%d logins=%d", ok, len(courses), logins)
+	}
+}
+
+func TestRunLogsInWhenNoSessionIsOpen(t *testing.T) {
+	logins, courses, ok := runWithFakes(t, false, cycleGradeHTML)
+	if !ok || len(courses) != 1 || logins != 1 {
+		t.Fatalf("expected one login, ok=%v courses=%d logins=%d", ok, len(courses), logins)
+	}
+}
+
+func TestRunLogsInOnceWhenSessionClosesDuringTheCycle(t *testing.T) {
+	loginPage := `<form action="/auth/login"><input name="kullanici_adi"><input type="password" name="kullanici_sifre"></form>`
+	logins, courses, ok := runWithFakes(t, true, loginPage, cycleGradeHTML)
+	if !ok || len(courses) != 1 || logins != 1 {
+		t.Fatalf("expected one recovery login and a successful retry, ok=%v courses=%d logins=%d", ok, len(courses), logins)
+	}
+}
+
+func TestRunDoesNotLoopWhenTheSessionStaysClosed(t *testing.T) {
+	loginPage := `<form action="/auth/login"><input type="password" name="kullanici_sifre"></form>`
+	logins, _, ok := runWithFakes(t, true, loginPage)
+	if ok || logins != 1 {
+		t.Fatalf("expected a single recovery attempt, ok=%v logins=%d", ok, logins)
+	}
+}

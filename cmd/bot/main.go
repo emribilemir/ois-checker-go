@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -190,17 +191,52 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 		log.Println("Not taraması duraklatıldı ve ders seçme takibi kapalı; OİS'e giriş atlandı")
 		return nil, true
 	}
-	loginOK, failureReason := tryLogin(client, cfg, auth.Login, time.Sleep)
-	if !loginOK {
-		reason := fmt.Sprintf("%d denemede giriş sağlanamadı (son hata: %s)", maxLoginAttempts, failureReason)
-		if failureReason == "invalid_credentials" {
-			reason = "OIS kullanıcı adı veya şifresi reddedildi"
+	started := time.Now()
+	reused := false
+	if active, reason := checkSession(client, cfg); active {
+		reused = true
+		log.Println("[tur] OİS oturumu açık; CAPTCHA'lı giriş atlandı")
+	} else {
+		log.Printf("[tur] OİS oturumu yok (%s); giriş yapılıyor", reason)
+		if !loginForCycle(client, cfg) {
+			return nil, false
 		}
-		recordCheckFailure(reason)
-		log.Printf("login sağlanamadı, bu döngü atlanıyor: %s", reason)
-		return nil, false
 	}
-	return runAuthenticated(client, cfg)
+	courses, ok, expired := runCycle(client, cfg)
+	if expired && reused {
+		// Oturum kontrolden sonra kapandı (ör. tarayıcıdan girildi): bir kez giriş yapıp turu tekrarla.
+		log.Println("[tur] OİS oturumu tur sırasında kapandı; yeniden giriş yapılıyor")
+		if !loginForCycle(client, cfg) {
+			return nil, false
+		}
+		courses, ok, _ = runCycle(client, cfg)
+	}
+	log.Printf("[tur] %s sürdü (giriş atlandı: %v)", time.Since(started).Round(100*time.Millisecond), reused && !expired)
+	return courses, ok
+}
+
+// checkSession ve loginFn testlerde değiştirilebilsin diye değişkendir.
+var (
+	checkSession = auth.SessionActive
+	loginFn      = auth.Login
+)
+
+func loginForCycle(client *http.Client, cfg *config.Config) bool {
+	loginOK, failureReason := tryLogin(client, cfg, loginFn, time.Sleep)
+	if loginOK {
+		return true
+	}
+	reason := fmt.Sprintf("%d denemede giriş sağlanamadı (son hata: %s)", maxLoginAttempts, failureReason)
+	if failureReason == "invalid_credentials" {
+		reason = "OIS kullanıcı adı veya şifresi reddedildi"
+	}
+	recordCheckFailure(reason)
+	log.Printf("login sağlanamadı, bu döngü atlanıyor: %s", reason)
+	return false
+}
+
+func isSessionExpired(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "session_expired")
 }
 
 func tryLogin(client *http.Client, cfg *config.Config, login loginFunction, pause func(time.Duration)) (bool, string) {
@@ -233,8 +269,15 @@ func tryLogin(client *http.Client, cfg *config.Config, login loginFunction, paus
 }
 
 func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
+	courses, ok, _ := runCycle(client, cfg)
+	return courses, ok
+}
+
+// runCycle oturum açıkken bir tur çalıştırır. expired, OİS'in turda oturumu
+// kapalı gösterdiğini söyler.
+func runCycle(client *http.Client, cfg *config.Config) ([]scraper.Course, bool, bool) {
 	// Ders seçme takibi not sayfasındaki değişikliklerden ve parser hatalarından bağımsızdır.
-	runDersSecmeCheck(client, cfg)
+	selectionExpired := runDersSecmeCheck(client, cfg)
 
 	cacheMu.RLock()
 	paused := isPaused
@@ -242,7 +285,7 @@ func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course
 	if paused {
 		recordCheckSuccess()
 		log.Println("Not taraması duraklatıldı; ders seçme takibi çalışmaya devam ediyor")
-		return nil, true
+		return nil, true, selectionExpired
 	}
 
 	// Not çek
@@ -250,7 +293,7 @@ func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course
 	if err != nil {
 		recordCheckFailure(err.Error())
 		log.Printf("not çekme hata: %v", err)
-		return nil, false
+		return nil, false, isSessionExpired(err)
 	}
 	log.Printf("%d ders bulundu", len(courses))
 
@@ -259,12 +302,12 @@ func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course
 	if err != nil {
 		recordCheckFailure(err.Error())
 		log.Printf("diff hata: %v", err)
-		return nil, false
+		return nil, false, false
 	}
 	if !changed {
 		recordCheckSuccess()
 		log.Println("değişiklik yok")
-		return courses, true
+		return courses, true, false
 	}
 
 	// Bildirim
@@ -275,7 +318,7 @@ func runAuthenticated(client *http.Client, cfg *config.Config) ([]scraper.Course
 	}
 	recordCheckSuccess()
 
-	return courses, true
+	return courses, true, false
 }
 
 func recordCheckFailure(reason string) {
@@ -316,7 +359,9 @@ func controlState() (paused, courseSelectionActive bool) {
 	return isPaused, isDersSecmeActive
 }
 
-func runDersSecmeCheck(client *http.Client, cfg *config.Config) {
+// runDersSecmeCheck ders seçme durumunu kontrol eder; expired, OİS'in oturumu
+// kapalı gösterdiğini söyler.
+func runDersSecmeCheck(client *http.Client, cfg *config.Config) (expired bool) {
 	cacheMu.RLock()
 	active := isDersSecmeActive
 	notified := dersSecmeNotified
@@ -328,7 +373,7 @@ func runDersSecmeCheck(client *http.Client, cfg *config.Config) {
 	status, err := dersecme.Inspect(client, cfg)
 	if err != nil {
 		log.Printf("ders seçme kontrol hata: %v", err)
-		return
+		return isSessionExpired(err)
 	}
 
 	if status.Open && !notified {
@@ -364,6 +409,7 @@ func runDersSecmeCheck(client *http.Client, cfg *config.Config) {
 	if status.Open && cfg.StateFile != "" {
 		checkElectivePools(client, cfg, status.PoolPaths, status.SelectedCourses)
 	}
+	return false
 }
 
 func checkElectivePools(client *http.Client, cfg *config.Config, discovered []string, selected []dersecme.SelectedCourse) {

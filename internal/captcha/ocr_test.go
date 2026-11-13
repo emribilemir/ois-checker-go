@@ -1,6 +1,9 @@
 package captcha
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestIsValidRejectsOCRTextWithWrongLength(t *testing.T) {
 	if IsValid("ld4hvjiz") {
@@ -52,5 +55,57 @@ func TestParseTesseractTSVReturnsSanitizedTextAndMeanConfidence(t *testing.T) {
 	}
 	if confidence != 70 {
 		t.Fatalf("expected mean confidence 70, got %.3f", confidence)
+	}
+}
+
+func scripted(results []ocrCandidate) (func(ocrPass) (ocrCandidate, error), []ocrPass) {
+	passes := make([]ocrPass, len(results))
+	i := 0
+	return func(ocrPass) (ocrCandidate, error) {
+		r := results[i]
+		i++
+		if r.text == "ERR" {
+			return ocrCandidate{}, errors.New("tesseract çöktü")
+		}
+		return r, nil
+	}, passes
+}
+
+func TestEnsembleDoesNotStopEarlyOnConfidentlessMajority(t *testing.T) {
+	// Canlı sitede sunucunun kabul ettiği okuma e4zs; b4zs sıfır güvenle 4 oy topluyor.
+	live := []ocrCandidate{
+		{text: "bazs", confidence: 0}, {text: "b4zs", confidence: 0}, {text: "e4zs", confidence: 80.107},
+		{text: "b4zs", confidence: 0}, {text: "e4zs", confidence: 65.919}, {text: "b4zs", confidence: 0},
+		{text: "e4275", confidence: 0}, {text: "b4zs", confidence: 0}, {text: "e4275", confidence: 18.628},
+	}
+	run, passes := scripted(live)
+	candidates, runs, _ := runEnsemble(passes, run)
+	if runs != len(live) || selectCandidate(candidates) != "e4zs" {
+		t.Fatalf("expected the full ensemble to pick e4zs, runs=%d got=%q", runs, selectCandidate(candidates))
+	}
+}
+
+func TestEnsembleStopsOnceAConfidentReadingIsConfirmed(t *testing.T) {
+	clean := []ocrCandidate{
+		{text: "k7mp", confidence: 85}, {text: "k7np", confidence: 40}, {text: "k7mp", confidence: 72},
+		{text: "k7mp", confidence: 0}, {text: "zzzz", confidence: 99}, {text: "zzzz", confidence: 99},
+		{text: "zzzz", confidence: 99}, {text: "zzzz", confidence: 99}, {text: "zzzz", confidence: 99}, {text: "zzzz", confidence: 99},
+	}
+	run, passes := scripted(clean)
+	candidates, runs, _ := runEnsemble(passes, run)
+	if runs != 4 || selectCandidate(candidates) != "k7mp" {
+		t.Fatalf("expected to stop after 4 readings with k7mp, runs=%d got=%q", runs, selectCandidate(candidates))
+	}
+}
+
+func TestEnsembleKeepsGoingAfterTesseractErrors(t *testing.T) {
+	run, passes := scripted([]ocrCandidate{{text: "ERR"}, {text: "ERR"}, {text: "ab12", confidence: 90}, {text: "ab12", confidence: 90}, {text: "ab12", confidence: 90}, {text: "ERR"}})
+	candidates, runs, lastErr := runEnsemble(passes, run)
+	if runs != 5 || len(candidates) != 3 || lastErr == nil {
+		t.Fatalf("runs=%d candidates=%d lastErr=%v", runs, len(candidates), lastErr)
+	}
+	run, passes = scripted([]ocrCandidate{{text: "ERR"}, {text: "ERR"}})
+	if candidates, _, lastErr := runEnsemble(passes, run); len(candidates) != 0 || lastErr == nil {
+		t.Fatal("all-failed ensemble must report the Tesseract error")
 	}
 }

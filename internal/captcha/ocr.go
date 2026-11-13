@@ -21,6 +21,59 @@ import (
 
 const candidateAgreementBonus = 30.0
 
+// Erken durma: önde olan dört karakterli okuma en az earlyStopVotes okumada
+// aynı çıkmış ve en az birinde güven earlyStopConfidence'a ulaşmışsa kalan
+// Tesseract çalıştırmaları atlanır. Güven şartı, canlı sitede doğrulanan
+// "e4zs" örneğindeki gibi sıfır güvenle çok oy toplayan yanlış okumada
+// erken durmayı engeller.
+const (
+	earlyStopVotes      = 3
+	earlyStopConfidence = 60.0
+)
+
+type ocrPass struct {
+	variant string
+	path    string
+	psm     int
+}
+
+// runEnsemble okumaları sırayla çalıştırır ve sonuç belli olunca durur.
+// runs, çalıştırılan okuma sayısıdır.
+func runEnsemble(passes []ocrPass, run func(ocrPass) (ocrCandidate, error)) (candidates []ocrCandidate, runs int, lastErr error) {
+	for _, pass := range passes {
+		runs++
+		candidate, err := run(pass)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		candidate.variant = pass.variant
+		candidates = append(candidates, candidate)
+		if confirmed(candidates) {
+			break
+		}
+	}
+	return candidates, runs, lastErr
+}
+
+// confirmed, seçilecek okumanın erken durmaya yetecek kadar desteklendiğini söyler.
+func confirmed(candidates []ocrCandidate) bool {
+	leader := selectCandidate(candidates)
+	if leader == "" {
+		return false
+	}
+	votes, best := 0, 0.0
+	for _, c := range candidates {
+		if c.text == leader {
+			votes++
+			if c.confidence > best {
+				best = c.confidence
+			}
+		}
+	}
+	return votes >= earlyStopVotes && best >= earlyStopConfidence
+}
+
 var captchaThresholds = []uint8{105, 115, 125, 135}
 
 type ocrCandidate struct {
@@ -71,32 +124,33 @@ func Solve(imgBytes []byte) (string, error) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	var candidates []ocrCandidate
 	variantData := make(map[string][]byte, len(variants))
-	var lastRunErr error
-	successfulRuns := 0
+	var passes []ocrPass
 	for _, variant := range variants {
 		variantData[variant.name] = variant.data
 		path := filepath.Join(tempDir, variant.name+".png")
 		if err := os.WriteFile(path, variant.data, 0600); err != nil {
 			return "", fmt.Errorf("OCR görseli yaz: %w", err)
 		}
-
 		for _, psm := range []int{8, 10} {
-			candidate, err := runTesseract(tesseractPath, path, psm)
-			if err != nil {
-				lastRunErr = err
-				log.Printf("[ocr] variant=%s psm=%d hata=%v", variant.name, psm, err)
-				continue
-			}
-			successfulRuns++
-			candidate.variant = variant.name
-			candidates = append(candidates, candidate)
-			log.Printf("[ocr] variant=%s psm=%d text=%q confidence=%.1f", variant.name, psm, candidate.text, candidate.confidence)
+			passes = append(passes, ocrPass{variant: variant.name, path: path, psm: psm})
 		}
 	}
 
-	if successfulRuns == 0 {
+	candidates, runs, lastRunErr := runEnsemble(passes, func(pass ocrPass) (ocrCandidate, error) {
+		candidate, err := runTesseract(tesseractPath, pass.path, pass.psm)
+		if err != nil {
+			log.Printf("[ocr] variant=%s psm=%d hata=%v", pass.variant, pass.psm, err)
+			return candidate, err
+		}
+		log.Printf("[ocr] variant=%s psm=%d text=%q confidence=%.1f", pass.variant, pass.psm, candidate.text, candidate.confidence)
+		return candidate, nil
+	})
+	if runs < len(passes) {
+		log.Printf("[ocr] erken durdu: %d/%d okuma yeterli oldu", runs, len(passes))
+	}
+
+	if len(candidates) == 0 {
 		return "", fmt.Errorf("tesseract hatası: %w", lastRunErr)
 	}
 

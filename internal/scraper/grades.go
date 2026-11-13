@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/html"
 
 	"notbot/config"
+	"notbot/internal/auth"
 )
 
 // Component bir sınav bileşenidir (Ara Sınav, Final vb.)
@@ -119,6 +120,10 @@ func fetchGradePage(client *http.Client, cfg *config.Config, method, target stri
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, finalURL, fmt.Errorf("sinav sonuc body okuma: %w", err)
+	}
+	if auth.IsLoginPage(body) {
+		// Oturum başka ekranda açılınca OİS aynı adreste giriş formunu döndürür.
+		return nil, finalURL, fmt.Errorf("session_expired")
 	}
 	return body, finalURL, nil
 }

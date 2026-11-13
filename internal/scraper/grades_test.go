@@ -3,6 +3,7 @@ package scraper
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -265,4 +266,16 @@ func readRequestBody(t *testing.T, req *http.Request) string {
 		t.Fatalf("read request body: %v", err)
 	}
 	return string(body)
+}
+
+func TestFetchGradesReportsLoginPageServedAtGradeURLAsExpiredSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<form action="/auth/login"><input name="kullanici_adi"><input type="password" name="kullanici_sifre"><input name="captcha"></form>`))
+	}))
+	defer server.Close()
+
+	_, err := FetchGrades(server.Client(), &config.Config{UniversityURL: server.URL})
+	if err == nil || err.Error() != "session_expired" {
+		t.Fatalf("expected session_expired, got %v", err)
+	}
 }

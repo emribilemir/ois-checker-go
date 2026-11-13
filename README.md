@@ -5,7 +5,8 @@ Built fully native with Go and executed locally without needing robust web brows
 
 ## Features
 - **Ultra-Lightweight**: Built on Go HTTP clients & raw HTML parsing.
-- **Tesseract OCR Ensemble**: Compares multiple live-site-tuned threshold variants and page-segmentation modes, then selects the strongest CAPTCHA reading by confidence and agreement.
+- **Tesseract OCR Ensemble**: Compares multiple live-site-tuned threshold variants and page-segmentation modes, then selects the strongest CAPTCHA reading by confidence and agreement. The ensemble stops early once the leading reading is confirmed by three passes with at least one confident pass; otherwise all ten passes run.
+- **Session Reuse**: Each cycle first checks with one GET whether the OIS session is still open and skips the CAPTCHA login when it is. If OIS shows the login page during the cycle (for example after a browser login elsewhere), the bot logs in once and repeats the cycle. Each cycle logs its duration as `[tur] ... sürdü`.
 - **Interactive Telegram UI**: A 2x2 menu (Notlar, Program, Sınavlar, Ayarlar) plus `/menu`, `/notlar`, `/program`, `/sinav`, `/ayarlar` in Telegram's command menu. Button presses update the same message instead of adding new ones.
 - **Rich Messages**: Messages are sent as Telegram rich messages (headings, tables, collapsible days, checklists). If Telegram rejects a rich message, the same content is sent as a plain HTML card. All message layouts live in `internal/view`. Startup messages are silent; grade, course-selection, elective-pool and class alerts ring.
 - **Weekly Timetable**: Fetches the current OIS course schedule on demand and displays each day in a mobile-friendly Telegram message with instructor names and clear online-class markers.
