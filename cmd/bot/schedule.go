@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"html"
 	"net/http"
 	"strings"
 	"sync"
@@ -10,12 +9,15 @@ import (
 
 	"notbot/config"
 	"notbot/internal/auth"
+	"notbot/internal/notify"
 	"notbot/internal/schedule"
+	"notbot/internal/view"
 )
 
 const (
 	scheduleRefreshEvery = 30 * time.Minute
 	scheduleRetryAfter   = 5 * time.Minute
+	reminderLead         = 15 * time.Minute
 )
 
 func remindersEnabled() bool { return remindersActive.Load() }
@@ -43,10 +45,10 @@ type scheduleService struct {
 	fetchedAt time.Time
 	failedAt  time.Time
 	fetch     func() ([]schedule.Entry, error)
-	send      func(string) error
+	send      func(notify.Message) error
 }
 
-func newScheduleService(statePath string, fetch func() ([]schedule.Entry, error), send func(string) error) (*scheduleService, error) {
+func newScheduleService(statePath string, fetch func() ([]schedule.Entry, error), send func(notify.Message) error) (*scheduleService, error) {
 	state, err := schedule.LoadState(statePath)
 	if err != nil {
 		return nil, err
@@ -76,19 +78,19 @@ func (s *scheduleService) SetEnabled(enabled bool) error {
 	return nil
 }
 
-func (s *scheduleService) Show() (string, error) {
+func (s *scheduleService) Show() ([]schedule.Entry, error) {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	entries, err := s.fetch()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	s.mu.Lock()
 	s.entries = entries
 	s.fetchedAt = time.Now()
 	s.failedAt = time.Time{}
 	s.mu.Unlock()
-	return schedule.FormatWeek(entries), nil
+	return entries, nil
 }
 
 // needsRefreshLocked, s.mu tutulurken çağrılır.
@@ -145,9 +147,8 @@ func (s *scheduleService) Check(now time.Time) error {
 			delete(s.state.Sent, key)
 		}
 	}
-	for _, reminder := range schedule.Due(s.entries, now, 15*time.Minute, s.state.Sent) {
-		message := reminderMessage(reminder.Entry)
-		if err := s.send(message); err != nil {
+	for _, reminder := range schedule.Due(s.entries, now, reminderLead, s.state.Sent) {
+		if err := s.send(view.Reminder(reminder.Entry, reminderLead)); err != nil {
 			return err
 		}
 		s.state.Sent[reminder.Key] = true
@@ -159,18 +160,4 @@ func (s *scheduleService) Check(now time.Time) error {
 		return fmt.Errorf("ders programı yenilenemedi, önceki program kullanıldı: %w", refreshErr)
 	}
 	return nil
-}
-
-func reminderMessage(entry schedule.Entry) string {
-	place := entry.Location
-	icon := "🏫"
-	if entry.Online {
-		icon = "🌐"
-		place = "Online"
-	}
-	message := fmt.Sprintf("⏰ <b>Ders yakında başlıyor</b>\n\n%s <b>%s</b>\n🕒 %s–%s\n📍 %s", icon, html.EscapeString(entry.Name), entry.Start, entry.End, html.EscapeString(place))
-	if entry.Instructor != "" {
-		message += "\n👤 Hoca: " + html.EscapeString(entry.Instructor)
-	}
-	return message
 }

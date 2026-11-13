@@ -131,32 +131,6 @@ func TestFetchReportsExpiredSession(t *testing.T) {
 	}
 }
 
-func TestFormatShowsUpcomingExamsGroupedByDay(t *testing.T) {
-	day := func(d int) time.Time { return time.Date(2026, 11, d, 0, 0, 0, 0, time.UTC) }
-	now := time.Date(2026, 11, 13, 22, 0, 0, 0, time.FixedZone("Istanbul", 3*3600))
-	message := Format([]Exam{
-		{Name: "Eski", Date: day(10), Start: "10:00"},
-		{Name: "Robotik", Kind: "Vize", Date: day(14), Start: "10:00", End: "11:30", Place: "A<1>"},
-		{Name: "Ağlar", Date: day(14), Start: "13:00"},
-		{Code: "BLM305", Date: day(20)},
-	}, now)
-
-	for _, want := range []string{"14 Kasım Cumartesi</b> · yarın", "🕒 10:00–11:30  <b>Robotik</b> (Vize)", "📍 A&lt;1&gt;", "🕒 13:00  <b>Ağlar</b>", "20 Kasım Cuma</b> · 7 gün sonra", "Saat belirtilmemiş  <b>BLM305</b>", "Geçmiş 1 sınav gösterilmedi"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("message missing %q:\n%s", want, message)
-		}
-	}
-	if strings.Contains(message, "Eski") || strings.Count(message, "14 Kasım") != 1 {
-		t.Fatalf("past exam shown or day header repeated:\n%s", message)
-	}
-}
-
-func TestFormatEmptyCalendar(t *testing.T) {
-	if message := Format(nil, time.Now()); !strings.Contains(message, "henüz sınav yok") {
-		t.Fatalf("unexpected empty message: %s", message)
-	}
-}
-
 func TestFetchReadsTheKnownCalendarPageWithoutVisitingOtherPages(t *testing.T) {
 	var requested []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -227,21 +201,12 @@ func TestParseAtlasExamProgramme(t *testing.T) {
 		t.Fatalf("unexpected second exam: %#v", exams[1])
 	}
 
-	message := Format(exams, time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC))
-	for _, want := range []string{"🕒 13:30  <b>ROBOTİK</b> (Ara Sınav)", "📍 B-105 · Kağıthane", "👤 Prof. Dr. Deneme", "ℹ️ Kitap kapalı"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("message missing %q:\n%s", want, message)
-		}
-	}
 }
 
 func TestParseEmptyAtlasExamProgramme(t *testing.T) {
 	exams, _, ok := Parse(atlasPage(""))
 	if !ok || len(exams) != 0 {
 		t.Fatalf("an empty programme is a valid calendar, ok=%v exams=%#v", ok, exams)
-	}
-	if message := Format(exams, time.Now()); !strings.Contains(message, "henüz sınav yok") {
-		t.Fatalf("unexpected message: %s", message)
 	}
 }
 

@@ -1,11 +1,13 @@
 package notify
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -13,113 +15,181 @@ import (
 var (
 	telegramSendClient = &http.Client{Timeout: 15 * time.Second}
 	telegramPollClient = &http.Client{Timeout: 40 * time.Second}
+	apiBase            = "https://api.telegram.org"
 )
 
-func SendTelegram(token, chatID, message string) error {
-	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
-		"chat_id":    {chatID},
-		"text":       {message},
-		"parse_mode": {"Markdown"},
-	})
+// Button bir satır içi düğmedir. Data doluysa geri çağrı, URL doluysa bağlantı düğmesidir.
+type Button struct {
+	Text string
+	Data string
+	URL  string
+}
+
+// Keyboard satır satır düğmelerdir.
+type Keyboard [][]Button
+
+// Message bir bot mesajıdır. Rich, Telegram'ın zengin mesaj HTML'idir (başlık,
+// tablo, açılır bölüm). Plain, zengin mesaj kabul edilmezse gönderilen sade
+// Telegram HTML'idir ve her zaman doludur.
+type Message struct {
+	Rich     string
+	Plain    string
+	Keyboard Keyboard
+	Silent   bool
+}
+
+// APIError Telegram'ın reddettiği bir isteği anlatır.
+type APIError struct {
+	Method      string
+	Status      int
+	Description string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("telegram %s %d: %s", e.Method, e.Status, e.Description)
+}
+
+// rejected, isteğin biçim yüzünden reddedildiğini söyler (ağ ya da sunucu hatası değil).
+func rejected(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != http.StatusTooManyRequests
+}
+
+func notModified(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && strings.Contains(apiErr.Description, "message is not modified")
+}
+
+func call(token, method string, payload map[string]any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	resp, err := telegramSendClient.Post(fmt.Sprintf("%s/bot%s/%s", apiBase, token, method), "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("telegram %d: %s", resp.StatusCode, string(b))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	var result struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	_ = json.Unmarshal(raw, &result)
+	if resp.StatusCode != http.StatusOK || !result.OK {
+		description := result.Description
+		if description == "" {
+			description = strings.TrimSpace(string(raw))
+		}
+		return &APIError{Method: method, Status: resp.StatusCode, Description: description}
 	}
 	return nil
 }
 
-func SendHTML(token, chatID, message string) error {
-	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
-		"chat_id": {chatID}, "text": {message}, "parse_mode": {"HTML"},
-	})
-	if err != nil {
+func (k Keyboard) markup() map[string]any {
+	rows := make([][]map[string]string, 0, len(k))
+	for _, row := range k {
+		buttons := make([]map[string]string, 0, len(row))
+		for _, b := range row {
+			button := map[string]string{"text": b.Text}
+			if b.URL != "" {
+				button["url"] = b.URL
+			} else {
+				button["callback_data"] = b.Data
+			}
+			buttons = append(buttons, button)
+		}
+		rows = append(rows, buttons)
+	}
+	return map[string]any{"inline_keyboard": rows}
+}
+
+func richPayload(m Message) map[string]any {
+	return map[string]any{"html": m.Rich, "skip_entity_detection": true}
+}
+
+func withCommon(payload map[string]any, m Message) map[string]any {
+	if len(m.Keyboard) > 0 {
+		payload["reply_markup"] = m.Keyboard.markup()
+	}
+	return payload
+}
+
+// Send mesajı gönderir: önce zengin biçim, Telegram onu reddederse sade biçim.
+func Send(token, chatID string, m Message) error {
+	if m.Rich != "" {
+		err := call(token, "sendRichMessage", withCommon(map[string]any{
+			"chat_id": chatID, "rich_message": richPayload(m), "disable_notification": m.Silent,
+		}, m))
+		if err == nil || !rejected(err) {
+			return err
+		}
+		log.Printf("zengin mesaj reddedildi, sade biçim gönderiliyor: %v", err)
+	}
+	return call(token, "sendMessage", withCommon(map[string]any{
+		"chat_id": chatID, "text": m.Plain, "parse_mode": "HTML",
+		"link_preview_options": map[string]bool{"is_disabled": true}, "disable_notification": m.Silent,
+	}, m))
+}
+
+// Edit düğmenin bulunduğu mesajı yerinde günceller; düzenlenemezse yeni mesaj gönderir.
+func Edit(token, chatID string, messageID int, m Message) error {
+	if messageID == 0 {
+		return Send(token, chatID, m)
+	}
+	if m.Rich != "" {
+		err := call(token, "editMessageText", withCommon(map[string]any{
+			"chat_id": chatID, "message_id": messageID, "rich_message": richPayload(m),
+		}, m))
+		if err == nil || notModified(err) {
+			return nil
+		}
+		if !rejected(err) {
+			return err
+		}
+		log.Printf("zengin düzenleme reddedildi, sade biçim deneniyor: %v", err)
+	}
+	err := call(token, "editMessageText", withCommon(map[string]any{
+		"chat_id": chatID, "message_id": messageID, "text": m.Plain, "parse_mode": "HTML",
+		"link_preview_options": map[string]bool{"is_disabled": true},
+	}, m))
+	if err == nil || notModified(err) {
+		return nil
+	}
+	if !rejected(err) {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("telegram %d: %s", resp.StatusCode, string(b))
-	}
-	return nil
+	log.Printf("mesaj düzenlenemedi, yeni mesaj gönderiliyor: %v", err)
+	return Send(token, chatID, m)
 }
 
-func SendMenu(token, chatID, message string, isPaused, isDersSecmeActive, remindersEnabled bool) error {
-	return sendMenu(token, chatID, message, "Markdown", isPaused, isDersSecmeActive, remindersEnabled)
-}
+// Command Telegram'ın "/" menüsünde görünen bir komuttur.
+type Command struct{ Name, Description string }
 
-func SendSchedule(token, chatID, message string, isPaused, isDersSecmeActive, remindersEnabled bool) error {
-	return sendMenu(token, chatID, message, "HTML", isPaused, isDersSecmeActive, remindersEnabled)
-}
-
-func sendMenu(token, chatID, message, parseMode string, isPaused, isDersSecmeActive, remindersEnabled bool) error {
-	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-
-	// Dinamik butonlar
-	pauseText := "⏸ Taramayı Durdur"
-	pauseCmd := "cmd_pause"
-	if isPaused {
-		pauseText = "▶️ Taramayı Başlat"
-		pauseCmd = "cmd_resume"
+// SetCommands komut menüsünü (sohbet kutusundaki "/" ve Menü düğmesi) ayarlar.
+func SetCommands(token string, commands []Command) error {
+	list := make([]map[string]string, 0, len(commands))
+	for _, c := range commands {
+		list = append(list, map[string]string{"command": strings.TrimPrefix(c.Name, "/"), "description": c.Description})
 	}
-
-	dersSecmeText := "📋 Ders Seçme Takibi Aç"
-	dersSecmeCmd := "cmd_ders_secme_on"
-	if isDersSecmeActive {
-		dersSecmeText = "🚫 Ders Seçme Takibi Kapat"
-		dersSecmeCmd = "cmd_ders_secme_off"
-	}
-	reminderText := "🔔 Ders Uyarılarını Aç"
-	reminderCmd := "cmd_reminders_on"
-	if remindersEnabled {
-		reminderText = "🔕 Ders Uyarılarını Kapat"
-		reminderCmd = "cmd_reminders_off"
-	}
-
-	kb := fmt.Sprintf(`{"inline_keyboard": [
-		[{"text": "📖 Anlık Notlar", "callback_data": "cmd_grades"}, {"text": "📊 Sistem Durumu", "callback_data": "cmd_stats"}],
-		[{"text": "📅 Ders Programım", "callback_data": "cmd_schedule"}, {"text": "📝 Sınav Takvimim", "callback_data": "cmd_exams"}],
-		[{"text": "%s", "callback_data": "%s"}],
-		[{"text": "%s", "callback_data": "%s"}],
-		[{"text": "%s", "callback_data": "%s"}],
-		[{"text": "🔄 Botu Yeniden Başlat", "callback_data": "cmd_restart"}]
-	]}`, reminderText, reminderCmd, dersSecmeText, dersSecmeCmd, pauseText, pauseCmd)
-
-	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
-		"chat_id":      {chatID},
-		"text":         {message},
-		"parse_mode":   {parseMode},
-		"reply_markup": {kb},
-	})
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("telegram menu hata: %d", resp.StatusCode)
-	}
-	return nil
+	return call(token, "setMyCommands", map[string]any{"commands": list})
 }
 
 func AnswerCallback(token, callbackQueryID, text string) {
-	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/answerCallbackQuery", token)
-	resp, err := telegramSendClient.PostForm(endpoint, url.Values{
-		"callback_query_id": {callbackQueryID},
-		"text":              {text},
-	})
-	if err == nil {
-		resp.Body.Close()
-	}
+	_ = call(token, "answerCallbackQuery", map[string]any{"callback_query_id": callbackQueryID, "text": text})
 }
 
-func StartPoller(token string, handler func(command, chatID, callbackQueryID string)) {
+// Update, poller'ın bota ilettiği tek komut ya da düğme basışıdır.
+type Update struct {
+	Command    string
+	ChatID     string
+	CallbackID string
+	MessageID  int // düğme basışında düğmenin bulunduğu mesaj; yazılan komutta 0
+}
+
+func StartPoller(token string, handler func(Update)) {
 	var offset int
-	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", token)
+	endpoint := fmt.Sprintf("%s/bot%s/getUpdates", apiBase, token)
 	for {
 		reqURL := fmt.Sprintf("%s?offset=%d&timeout=30", endpoint, offset)
 		resp, err := telegramPollClient.Get(reqURL)
@@ -142,7 +212,8 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 					ID      string `json:"id"`
 					Data    string `json:"data"`
 					Message *struct {
-						Chat struct {
+						MessageID int `json:"message_id"`
+						Chat      struct {
 							ID int64 `json:"id"`
 						} `json:"chat"`
 					} `json:"message"`
@@ -155,9 +226,14 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 				offset = u.UpdateID + 1
 
 				if u.Message != nil && isCommand(u.Message.Text) {
-					handler(commandName(u.Message.Text), fmt.Sprintf("%d", u.Message.Chat.ID), "")
+					handler(Update{Command: commandName(u.Message.Text), ChatID: fmt.Sprintf("%d", u.Message.Chat.ID)})
 				} else if u.CallbackQuery != nil && u.CallbackQuery.Message != nil {
-					handler(u.CallbackQuery.Data, fmt.Sprintf("%d", u.CallbackQuery.Message.Chat.ID), u.CallbackQuery.ID)
+					handler(Update{
+						Command:    u.CallbackQuery.Data,
+						ChatID:     fmt.Sprintf("%d", u.CallbackQuery.Message.Chat.ID),
+						CallbackID: u.CallbackQuery.ID,
+						MessageID:  u.CallbackQuery.Message.MessageID,
+					})
 				}
 			}
 		}
@@ -165,7 +241,16 @@ func StartPoller(token string, handler func(command, chatID, callbackQueryID str
 	}
 }
 
-var commands = map[string]bool{"/start": true, "/program": true, "/sinav": true, "/sinavlar": true}
+// Commands, botun tanıdığı yazılı komutlardır; SetCommands ile menüde de gösterilir.
+var Commands = []Command{
+	{"/menu", "Ana menü"},
+	{"/notlar", "Notlarım"},
+	{"/program", "Haftalık ders programı"},
+	{"/sinav", "Sınav takvimi"},
+	{"/ayarlar", "Takip ve uyarı ayarları"},
+}
+
+var aliases = map[string]bool{"/start": true, "/sinavlar": true}
 
 // commandName "/sinav@BotAdi" gibi grup biçimini ve büyük harfi sadeleştirir.
 func commandName(text string) string {
@@ -177,4 +262,15 @@ func commandName(text string) string {
 	return name
 }
 
-func isCommand(text string) bool { return commands[commandName(text)] }
+func isCommand(text string) bool {
+	name := commandName(text)
+	if aliases[name] {
+		return true
+	}
+	for _, c := range Commands {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}

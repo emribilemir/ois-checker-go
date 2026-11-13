@@ -1,10 +1,10 @@
 package notify
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -15,52 +15,142 @@ func (fn telegramRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, er
 	return fn(req)
 }
 
-func TestScheduleMessageUsesHTMLAndReminderControls(t *testing.T) {
-	previousTransport := http.DefaultTransport
-	http.DefaultTransport = telegramRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body, _ := io.ReadAll(req.Body)
-		values, err := url.ParseQuery(string(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if values.Get("parse_mode") != "HTML" || !strings.Contains(values.Get("reply_markup"), "cmd_schedule") || !strings.Contains(values.Get("reply_markup"), "cmd_exams") || !strings.Contains(values.Get("reply_markup"), "cmd_reminders_off") {
-			t.Errorf("schedule message missing HTML mode or controls: %v", values)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Request: req}, nil
-	})
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
-	if err := SendSchedule("token", "123", "<b>Program</b>", false, false, true); err != nil {
-		t.Fatal(err)
-	}
+type recordedCall struct {
+	Method  string
+	Payload map[string]any
 }
 
-func TestSendTelegramSetsARequestDeadline(t *testing.T) {
-	previousTransport := http.DefaultTransport
+// fakeTelegram answers each API method with the given status; unknown methods succeed.
+func fakeTelegram(t *testing.T, statuses map[string]int, descriptions map[string]string) *[]recordedCall {
+	t.Helper()
+	var calls []recordedCall
+	previous := http.DefaultTransport
 	http.DefaultTransport = telegramRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if _, ok := req.Context().Deadline(); !ok {
 			return nil, errors.New("telegram request has no deadline")
 		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-			Request:    req,
-		}, nil
+		method := req.URL.Path[strings.LastIndex(req.URL.Path, "/")+1:]
+		var payload map[string]any
+		body, _ := io.ReadAll(req.Body)
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("%s payload is not JSON: %v", method, err)
+		}
+		calls = append(calls, recordedCall{method, payload})
+		status := http.StatusOK
+		if s, ok := statuses[method]; ok {
+			status = s
+		}
+		response := `{"ok":true,"result":{}}`
+		if status != http.StatusOK {
+			response = `{"ok":false,"description":` + mustJSON(descriptions[method]) + `}`
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
 	})
-	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	return &calls
+}
 
-	if err := SendTelegram("token", "123", "message"); err != nil {
-		t.Fatalf("expected a bounded Telegram request, got %v", err)
+func mustJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+var sample = Message{
+	Rich:     "<h3>Başlık</h3><table><tr><td>a</td></tr></table>",
+	Plain:    "<b>Başlık</b>\n<blockquote>a</blockquote>",
+	Keyboard: Keyboard{{{Text: "Menü", Data: "cmd_menu"}, {Text: "OİS", URL: "https://ois.example"}}},
+	Silent:   true,
+}
+
+func TestSendUsesRichMessageWithKeyboard(t *testing.T) {
+	calls := fakeTelegram(t, nil, nil)
+	if err := Send("token", "123", sample); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].Method != "sendRichMessage" {
+		t.Fatalf("expected one sendRichMessage call, got %#v", *calls)
+	}
+	payload := (*calls)[0].Payload
+	rich := payload["rich_message"].(map[string]any)
+	if rich["html"] != sample.Rich || rich["skip_entity_detection"] != true || payload["disable_notification"] != true || payload["chat_id"] != "123" {
+		t.Fatalf("unexpected rich payload: %#v", payload)
+	}
+	keyboard, _ := json.Marshal(payload["reply_markup"])
+	if !strings.Contains(string(keyboard), `"callback_data":"cmd_menu"`) || !strings.Contains(string(keyboard), `"url":"https://ois.example"`) {
+		t.Fatalf("unexpected keyboard: %s", keyboard)
 	}
 }
 
-func TestCommandNameAcceptsExamCommands(t *testing.T) {
+func TestSendFallsBackToPlainHTMLWhenRichIsRejected(t *testing.T) {
+	calls := fakeTelegram(t, map[string]int{"sendRichMessage": http.StatusBadRequest}, map[string]string{"sendRichMessage": "Bad Request: can't parse rich message"})
+	if err := Send("token", "123", sample); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 2 || (*calls)[1].Method != "sendMessage" {
+		t.Fatalf("expected rich then plain, got %#v", *calls)
+	}
+	plain := (*calls)[1].Payload
+	if plain["text"] != sample.Plain || plain["parse_mode"] != "HTML" || plain["reply_markup"] == nil {
+		t.Fatalf("unexpected plain payload: %#v", plain)
+	}
+}
+
+func TestSendDoesNotDuplicateWhenTelegramIsDown(t *testing.T) {
+	calls := fakeTelegram(t, map[string]int{"sendRichMessage": http.StatusBadGateway}, nil)
+	if err := Send("token", "123", sample); err == nil {
+		t.Fatal("expected the server error to be returned")
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("a server error must not trigger the plain fallback, got %#v", *calls)
+	}
+}
+
+func TestSendPlainOnlyMessage(t *testing.T) {
+	calls := fakeTelegram(t, nil, nil)
+	if err := Send("token", "123", Message{Plain: "metin"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].Method != "sendMessage" || (*calls)[0].Payload["reply_markup"] != nil {
+		t.Fatalf("expected one plain message without keyboard, got %#v", *calls)
+	}
+}
+
+func TestEditTreatsUnchangedMessageAsSuccess(t *testing.T) {
+	calls := fakeTelegram(t, map[string]int{"editMessageText": http.StatusBadRequest}, map[string]string{"editMessageText": "Bad Request: message is not modified"})
+	if err := Edit("token", "123", 42, sample); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].Payload["message_id"] != float64(42) || (*calls)[0].Payload["rich_message"] == nil {
+		t.Fatalf("expected one rich edit, got %#v", *calls)
+	}
+}
+
+func TestEditSendsNewMessageWhenOriginalCannotBeEdited(t *testing.T) {
+	calls := fakeTelegram(t, map[string]int{"editMessageText": http.StatusBadRequest}, map[string]string{"editMessageText": "Bad Request: message to edit not found"})
+	if err := Edit("token", "123", 42, sample); err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	for _, c := range *calls {
+		methods = append(methods, c.Method)
+	}
+	if strings.Join(methods, ",") != "editMessageText,editMessageText,sendRichMessage" {
+		t.Fatalf("expected rich edit, plain edit, then new message; got %v", methods)
+	}
+}
+
+func TestCommandNameAcceptsMenuCommands(t *testing.T) {
 	for text, want := range map[string]string{"/sinav": "/sinav", "/Sinavlar@NotBot": "/sinavlar", "/program": "/program", "merhaba": "merhaba"} {
 		if got := commandName(text); got != want {
 			t.Fatalf("commandName(%q) = %q, want %q", text, got, want)
 		}
 	}
-	if !isCommand("/sinav") || !isCommand("/sinavlar@NotBot") || isCommand("/sil") {
-		t.Fatal("exam commands must be accepted and unknown commands ignored")
+	for _, accepted := range []string{"/start", "/menu", "/notlar", "/program", "/sinav", "/sinavlar@NotBot", "/ayarlar"} {
+		if !isCommand(accepted) {
+			t.Fatalf("%s must be accepted", accepted)
+		}
+	}
+	if isCommand("/sil") {
+		t.Fatal("unknown commands must be ignored")
 	}
 }

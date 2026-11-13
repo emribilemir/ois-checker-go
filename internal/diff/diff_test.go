@@ -129,24 +129,6 @@ func TestCheckReportsOnlyNewDuplicateOccurrence(t *testing.T) {
 	}
 }
 
-func TestFormatMessageDoesNotDoubleWrapWeight(t *testing.T) {
-	message := FormatMessage([]Change{{
-		Type:       "new_score",
-		CourseCode: "SEC101",
-		CourseName: "Siber Güvenliğe Giriş (A-, Başarı Puanı: 86.00)",
-		Component:  "Ödev",
-		Weight:     "(%20)",
-		NewScore:   "85.00",
-	}})
-
-	if strings.Contains(message, "((%20))") {
-		t.Fatalf("message double-wrapped weight: %s", message)
-	}
-	if !strings.Contains(message, "Ödev (%20):") {
-		t.Fatalf("message did not include normalized weight: %s", message)
-	}
-}
-
 func TestCheckSavesNormalizedCurrentState(t *testing.T) {
 	previous := []scraper.Course{{
 		Code:       "MATH101",

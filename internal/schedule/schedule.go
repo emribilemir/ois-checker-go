@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"fmt"
-	"html"
 	"sort"
 	"strings"
 	"time"
@@ -25,11 +24,6 @@ type Entry struct {
 type Reminder struct {
 	Entry Entry
 	Key   string
-}
-
-var dayNames = map[time.Weekday]string{
-	time.Monday: "Pazartesi", time.Tuesday: "Salı", time.Wednesday: "Çarşamba",
-	time.Thursday: "Perşembe", time.Friday: "Cuma", time.Saturday: "Cumartesi", time.Sunday: "Pazar",
 }
 
 func Parse(body []byte) ([]Entry, error) {
@@ -95,46 +89,6 @@ func Parse(body []byte) ([]Entry, error) {
 		return entries, nil
 	}
 	return nil, fmt.Errorf("ders programı tablosu bulunamadı; oturum kapanmış olabilir")
-}
-
-func FormatWeek(entries []Entry) string {
-	var out strings.Builder
-	out.WriteString("📅 <b>Ders Programım</b>\n")
-	if len(entries) == 0 {
-		out.WriteString("Bu dönemde programda ders görünmüyor.")
-		return out.String()
-	}
-	for day := time.Monday; day <= time.Saturday; day++ {
-		writeDay(&out, entries, day)
-	}
-	writeDay(&out, entries, time.Sunday)
-	return strings.TrimSpace(out.String())
-}
-
-func writeDay(out *strings.Builder, entries []Entry, day time.Weekday) {
-	var dayEntries []Entry
-	for _, entry := range entries {
-		if entry.Day == day {
-			dayEntries = append(dayEntries, entry)
-		}
-	}
-	out.WriteString("\n<b>" + dayNames[day] + "</b>\n")
-	if len(dayEntries) == 0 {
-		out.WriteString("— Ders yok\n")
-		return
-	}
-	for _, entry := range dayEntries {
-		icon := "🏫"
-		location := entry.Location
-		if entry.Online {
-			icon = "🌐"
-			location = "Online"
-		}
-		fmt.Fprintf(out, "%s–%s  %s <b>%s</b>\n     %s\n", entry.Start, entry.End, icon, html.EscapeString(entry.Name), html.EscapeString(location))
-		if entry.Instructor != "" {
-			fmt.Fprintf(out, "     👤 Hoca: %s\n", html.EscapeString(entry.Instructor))
-		}
-	}
 }
 
 func instructorsByCode(tables []*htmlnode.Node) map[string]string {

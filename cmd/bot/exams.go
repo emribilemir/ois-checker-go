@@ -12,22 +12,22 @@ import (
 )
 
 // fetchExamCalendar sınav takvimini okur; oturum kapanmışsa bir kez giriş yapıp yeniden dener.
-func fetchExamCalendar(client *http.Client, cfg *config.Config, now time.Time) (string, error) {
+func fetchExamCalendar(client *http.Client, cfg *config.Config) ([]exams.Exam, error) {
 	oisMu.Lock()
 	defer oisMu.Unlock()
 	list, err := exams.Fetch(client, cfg)
 	if errors.Is(err, exams.ErrSessionExpired) {
 		loggedIn, reason := tryLogin(client, cfg, auth.Login, time.Sleep)
 		if !loggedIn {
-			return "", fmt.Errorf("OİS girişi başarısız: %s (sınav takvimi hatası: %w)", reason, err)
+			return nil, fmt.Errorf("OİS girişi başarısız: %s (sınav takvimi hatası: %w)", reason, err)
 		}
 		list, err = exams.Fetch(client, cfg)
 		if errors.Is(err, exams.ErrSessionExpired) {
-			return "", fmt.Errorf("giriş başarılı olduğu halde sınav programı sayfası OİS oturumunu kapattı; sayfa şu an öğrenciye kapalı olabilir")
+			return nil, fmt.Errorf("giriş başarılı olduğu halde sınav programı sayfası OİS oturumunu kapattı; sayfa şu an öğrenciye kapalı olabilir")
 		}
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return exams.Format(list, now), nil
+	return list, nil
 }

@@ -80,19 +80,6 @@ func TestParseUsesDayHeadersForReminderDays(t *testing.T) {
 	}
 }
 
-func TestFormatWeekKeepsMobileReadableAndEscapesNames(t *testing.T) {
-	entries := []Entry{{Day: time.Monday, Start: "09:00", End: "10:00", Name: "A&B <Lab>", Code: "123", Location: "Online", Online: true, Instructor: "Dr. A & B"}, {Day: time.Tuesday, Start: "12:00", End: "13:00", Name: "Matematik", Location: "B3-09"}}
-	message := FormatWeek(entries)
-	for _, want := range []string{"<b>Pazartesi</b>", "09:00–10:00", "🌐", "A&amp;B &lt;Lab&gt;", "Hoca: Dr. A &amp; B", "<b>Salı</b>", "B3-09", "<b>Cuma</b>\n— Ders yok"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("formatted schedule missing %q: %s", want, message)
-		}
-	}
-	if strings.Contains(message, "<table") || strings.Contains(message, "<Lab>") {
-		t.Fatalf("message is not Telegram-safe mobile text: %s", message)
-	}
-}
-
 func TestDueRemindersOnlyWithinLeadWindowAndOncePerMeeting(t *testing.T) {
 	location := time.FixedZone("Istanbul", 3*3600)
 	now := time.Date(2026, 9, 21, 8, 46, 0, 0, location)

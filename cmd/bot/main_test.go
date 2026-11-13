@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"notbot/config"
 	"notbot/internal/auth"
 	"notbot/internal/diff"
+	"notbot/internal/notify"
 	"notbot/internal/scraper"
 )
 
@@ -116,7 +118,7 @@ func TestRunAuthenticatedChecksCourseSelectionWhenGradesAreUnchanged(t *testing.
 func TestUnavailableGradesMessageIncludesLastFailure(t *testing.T) {
 	recordCheckFailure("not sayfasında beklenen tablo bulunamadı")
 
-	message := gradesUnavailableMessage()
+	message := gradesUnavailableMessage().Rich
 	if !strings.Contains(message, "not sayfasında beklenen tablo bulunamadı") {
 		t.Fatalf("expected the latest failure in the user-facing status, got %q", message)
 	}
@@ -327,10 +329,7 @@ func TestRunDersSecmeCheckNotifiesWhenOISAddsACourseToTheSelectedList(t *testing
 	var telegramMessages []string
 	previousTransport := http.DefaultTransport
 	http.DefaultTransport = mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if err := req.ParseForm(); err != nil {
-			t.Fatalf("parse Telegram form: %v", err)
-		}
-		telegramMessages = append(telegramMessages, req.Form.Get("text"))
+		telegramMessages = append(telegramMessages, telegramText(t, req))
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
@@ -397,10 +396,7 @@ func TestRunDersSecmeCheckAlertsOnNewElectiveWithoutPostingToOIS(t *testing.T) {
 	var messages []string
 	previousTransport := http.DefaultTransport
 	http.DefaultTransport = mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if err := req.ParseForm(); err != nil {
-			t.Fatal(err)
-		}
-		messages = append(messages, req.Form.Get("text"))
+		messages = append(messages, telegramText(t, req))
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Request: req}, nil
 	})
 	t.Cleanup(func() { http.DefaultTransport = previousTransport })
@@ -483,7 +479,7 @@ func TestHealthHandlerToleratesLongPollIntervals(t *testing.T) {
 func TestUnavailableGradesMessageEscapesLoginReasonForHTML(t *testing.T) {
 	recordCheckFailure("5 denemede giriş sağlanamadı (son hata: ocr_fail) <tablo>")
 
-	message := gradesUnavailableMessage()
+	message := gradesUnavailableMessage().Rich + gradesUnavailableMessage().Plain
 	if !strings.Contains(message, "ocr_fail") || !strings.Contains(message, "&lt;tablo&gt;") || strings.Contains(message, "<tablo>") {
 		t.Fatalf("expected an HTML-safe failure reason, got %q", message)
 	}
@@ -511,5 +507,88 @@ func TestRunSkipsOISLoginWhenNothingIsMonitored(t *testing.T) {
 	courses, ok := run(server.Client(), cfg)
 	if !ok || courses != nil || requests != 0 {
 		t.Fatalf("expected a no-op cycle without OIS traffic, ok=%v courses=%v requests=%d", ok, courses, requests)
+	}
+}
+
+// telegramText returns the visible content of a captured Telegram request.
+func telegramText(t *testing.T, req *http.Request) string {
+	t.Helper()
+	var payload struct {
+		Text        string `json:"text"`
+		RichMessage struct {
+			HTML string `json:"html"`
+		} `json:"rich_message"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+		t.Fatalf("Telegram payload is not JSON: %v", err)
+	}
+	if payload.RichMessage.HTML != "" {
+		return payload.RichMessage.HTML
+	}
+	return payload.Text
+}
+
+type telegramCall struct {
+	method string
+	body   string
+}
+
+func captureTelegramCalls(t *testing.T) *[]telegramCall {
+	t.Helper()
+	var calls []telegramCall
+	previous := http.DefaultTransport
+	http.DefaultTransport = mainRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		calls = append(calls, telegramCall{req.URL.Path[strings.LastIndex(req.URL.Path, "/")+1:], string(body)})
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{}}`)), Request: req}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	return &calls
+}
+
+func TestButtonPressEditsTheSameMessage(t *testing.T) {
+	calls := captureTelegramCalls(t)
+	cacheMu.Lock()
+	previousPaused := isPaused
+	isPaused = false
+	cacheMu.Unlock()
+	t.Cleanup(func() { cacheMu.Lock(); isPaused = previousPaused; cacheMu.Unlock() })
+
+	b := &bot{cfg: &config.Config{TelegramToken: "token", TelegramChatID: "123", PollInterval: time.Minute}}
+	b.handle(notify.Update{Command: "cmd_pause", ChatID: "123", CallbackID: "cb", MessageID: 42})
+
+	if len(*calls) != 2 || (*calls)[0].method != "answerCallbackQuery" || (*calls)[1].method != "editMessageText" {
+		t.Fatalf("expected a toast and an in-place edit, got %#v", *calls)
+	}
+	if !strings.Contains((*calls)[1].body, `"message_id":42`) || !strings.Contains((*calls)[1].body, "cmd_resume") {
+		t.Fatalf("settings were not redrawn with the resume button: %s", (*calls)[1].body)
+	}
+	if paused, _ := controlState(); !paused {
+		t.Fatal("grade checks were not paused")
+	}
+}
+
+func TestGradeAlertButtonKeepsTheAlertAndSendsANewMessage(t *testing.T) {
+	calls := captureTelegramCalls(t)
+	cacheMu.Lock()
+	previous := cachedCourses
+	cachedCourses = []scraper.Course{{Code: "A1", Name: "Robotik", Components: []scraper.Component{{Name: "Vize", Score: "90"}}}}
+	cacheMu.Unlock()
+	t.Cleanup(func() { cacheMu.Lock(); cachedCourses = previous; cacheMu.Unlock() })
+
+	b := &bot{cfg: &config.Config{TelegramToken: "token", TelegramChatID: "123"}}
+	b.handle(notify.Update{Command: "cmd_grades_new", ChatID: "123", CallbackID: "cb", MessageID: 7})
+
+	if len(*calls) != 2 || (*calls)[1].method != "sendRichMessage" || !strings.Contains((*calls)[1].body, "Robotik") {
+		t.Fatalf("expected the grade list as a new rich message, got %#v", *calls)
+	}
+}
+
+func TestMessagesFromOtherChatsAreIgnored(t *testing.T) {
+	calls := captureTelegramCalls(t)
+	b := &bot{cfg: &config.Config{TelegramToken: "token", TelegramChatID: "123"}}
+	b.handle(notify.Update{Command: "/menu", ChatID: "999"})
+	if len(*calls) != 0 {
+		t.Fatalf("answered a stranger: %#v", *calls)
 	}
 }

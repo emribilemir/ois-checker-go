@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"notbot/internal/scraper"
 )
@@ -208,51 +207,4 @@ func loadState(path string) (State, error) {
 func saveState(path string, s State) error {
 	data, _ := json.MarshalIndent(s, "", "  ")
 	return os.WriteFile(path, data, 0644)
-}
-
-// FormatMessage değişiklikleri ders bazında gruplayıp Telegram mesajı oluşturur.
-func FormatMessage(changes []Change) string {
-	// Ders bazında grupla
-	type courseGroup struct {
-		name    string
-		changes []Change
-	}
-	groups := map[string]*courseGroup{}
-	order := []string{}
-
-	for _, ch := range changes {
-		g, ok := groups[ch.CourseCode]
-		if !ok {
-			g = &courseGroup{name: ch.CourseName}
-			groups[ch.CourseCode] = g
-			order = append(order, ch.CourseCode)
-		}
-		g.changes = append(g.changes, ch)
-	}
-
-	lines := []string{"🔔 *Not Değişikliği!*\n"}
-
-	for _, code := range order {
-		g := groups[code]
-		lines = append(lines, fmt.Sprintf("📚 *%s*", g.name))
-
-		for _, ch := range g.changes {
-			weight := ""
-			if ch.Weight != "" {
-				weight = " " + scraper.FormatWeight(ch.Weight)
-			}
-
-			switch ch.Type {
-			case "new_score":
-				lines = append(lines, fmt.Sprintf("   • %s%s: *%s*", ch.Component, weight, ch.NewScore))
-			case "score_change":
-				lines = append(lines, fmt.Sprintf("   • %s%s: %s → *%s*", ch.Component, weight, ch.OldScore, ch.NewScore))
-			case "new_course":
-				lines = append(lines, "   🆕 Ders eklendi")
-			}
-		}
-		lines = append(lines, "")
-	}
-
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
