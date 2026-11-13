@@ -85,7 +85,11 @@ func main() {
 	}()
 
 	log.Printf("Bot başladı. Kontrol aralığı: %s", cfg.PollInterval)
-	telemetry.Note("start", "sürüm "+os.Getenv("RENDER_GIT_COMMIT"))
+	commit := os.Getenv("RENDER_GIT_COMMIT")
+	if len(commit) > 7 {
+		commit = commit[:7] // tam karma uzun sayı parçası içerir ve maskelenirdi
+	}
+	telemetry.Note("start", "sürüm "+commit)
 
 	store := &settings.Store{Token: cfg.TelegramToken, ChatID: cfg.TelegramChatID}
 	if saved, ok, err := store.Load(); err != nil {
