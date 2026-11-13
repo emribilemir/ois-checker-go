@@ -129,11 +129,24 @@ func TestGradeChangeAlert(t *testing.T) {
 func TestWeekOpensTodayAndEscapes(t *testing.T) {
 	m := Week([]schedule.Entry{
 		{Day: time.Monday, Start: "09:00", End: "10:00", Name: "A&B <Lab>", Location: "Online", Online: true, Instructor: "Dr. A & B"},
-		{Day: time.Friday, Start: "12:00", End: "13:00", Name: "Matematik", Location: "B3-09"},
+		{Day: time.Friday, Start: "15:00", End: "16:00", Name: "Matematik", Location: "B3-09"},
 	}, now)
 	checkMessage(t, "week", m)
 	contains(t, "week rich", m.Rich, "<details><summary>Pazartesi · 1 ders</summary>", "<details open><summary>Bugün · Cuma · 1 ders</summary>", "A&amp;B &lt;Lab&gt;", "🌐 Online", "Dr. A &amp; B", "Ders yok: Salı, Çarşamba, Perşembe, Cumartesi, Pazar")
 	contains(t, "week plain", m.Plain, "<b>09:00–10:00</b>  A&amp;B &lt;Lab&gt;", "<i>🌐 Online · Dr. A &amp; B</i>", "<b>Bugün · Cuma</b>")
+
+	// Cuma 18:00: bugünün tek dersi 13:00'te bitti, sıradaki dersli gün Pazartesi açılır.
+	evening := Week([]schedule.Entry{
+		{Day: time.Monday, Start: "09:00", End: "10:00", Name: "X"},
+		{Day: time.Friday, Start: "12:00", End: "13:00", Name: "Y"},
+	}, time.Date(2026, 11, 13, 18, 0, 0, 0, istanbul))
+	contains(t, "week evening", evening.Rich, "<details open><summary>Pazartesi · 1 ders</summary>", "<details><summary>Bugün · Cuma · 1 ders</summary>")
+	// Pazar akşamı: Pazartesi yarındır.
+	sunday := Week([]schedule.Entry{{Day: time.Monday, Start: "09:00", End: "10:00", Name: "X"}}, time.Date(2026, 11, 15, 20, 0, 0, 0, istanbul))
+	contains(t, "week sunday", sunday.Rich, "<details open><summary>Yarın · Pazartesi · 1 ders</summary>")
+	// Haftada tek dersli gün bugün ve bitti: yine bugün açılır.
+	only := Week([]schedule.Entry{{Day: time.Friday, Start: "09:00", End: "10:00", Name: "X"}}, time.Date(2026, 11, 13, 18, 0, 0, 0, istanbul))
+	contains(t, "week only today", only.Rich, "<details open><summary>Bugün · Cuma")
 
 	saturday := Week([]schedule.Entry{{Day: time.Monday, Start: "09:00", End: "10:00", Name: "X"}}, now.Add(24*time.Hour))
 	contains(t, "week from saturday", saturday.Rich, "<details open><summary>Pazartesi")

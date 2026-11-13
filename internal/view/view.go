@@ -365,14 +365,24 @@ func Week(entries []schedule.Entry, now time.Time) notify.Message {
 			Keyboard: backKeyboard("cmd_schedule"),
 		}
 	}
+	// Açık gelen gün: bugün dersi varsa ve son dersi bitmediyse bugün, yoksa
+	// sıradaki dersli gün. Mesaj basıldığı anın durumunu gösterir; sonra
+	// kendiliğinden değişmez, 🔄 Yenile ile güncellenir.
+	clockNow := now.Format("15:04")
 	openDay := time.Weekday(-1)
 	for i := 0; i < 7; i++ {
 		day := time.Weekday((int(now.Weekday()) + i) % 7)
-		if len(byDay[day]) > 0 {
-			openDay = day
-			break
+		if len(byDay[day]) == 0 || (i == 0 && lastEnd(byDay[day]) <= clockNow) {
+			continue
 		}
+		openDay = day
+		break
 	}
+	if openDay < 0 && len(byDay[now.Weekday()]) > 0 {
+		// Haftada tek dersli gün bugün ve dersler bitti: yine de bugünü aç.
+		openDay = now.Weekday()
+	}
+	tomorrow := time.Weekday((int(now.Weekday()) + 1) % 7)
 
 	var rich, plain strings.Builder
 	var empty []string
@@ -385,8 +395,11 @@ func Week(entries []schedule.Entry, now time.Time) notify.Message {
 			continue
 		}
 		label := weekdays[day]
-		if day == now.Weekday() {
+		switch day {
+		case now.Weekday():
 			label = "Bugün · " + label
+		case tomorrow:
+			label = "Yarın · " + label
 		}
 		open := ""
 		if day == openDay {
@@ -417,6 +430,17 @@ func Week(entries []schedule.Entry, now time.Time) notify.Message {
 		plain.WriteString("\n<i>Ders yok: " + esc(strings.Join(empty, ", ")) + "</i>")
 	}
 	return notify.Message{Rich: rich.String(), Plain: plain.String(), Keyboard: backKeyboard("cmd_schedule")}
+}
+
+// lastEnd bir günün en geç biten dersinin saatidir ("15:04" biçimi, sözlük sırası saat sırasıdır).
+func lastEnd(entries []schedule.Entry) string {
+	last := ""
+	for _, e := range entries {
+		if e.End > last {
+			last = e.End
+		}
+	}
+	return last
 }
 
 // Reminder dersten önce gelen uyarıdır (sesli).
