@@ -20,6 +20,7 @@ import (
 	"notbot/internal/schedule"
 	"notbot/internal/scraper"
 	"notbot/internal/session"
+	"notbot/internal/settings"
 	"notbot/internal/view"
 )
 
@@ -84,6 +85,16 @@ func main() {
 
 	log.Printf("Bot başladı. Kontrol aralığı: %s", cfg.PollInterval)
 
+	store := &settings.Store{Token: cfg.TelegramToken, ChatID: cfg.TelegramChatID}
+	if saved, ok, err := store.Load(); err != nil {
+		log.Printf("ayarlar Telegram'dan okunamadı, varsayılanlar kullanılıyor: %v", err)
+	} else if ok {
+		applySettings(saved, program)
+		log.Printf("ayarlar sabit mesajdan yüklendi: %+v", saved)
+	} else {
+		log.Println("sabit ayar mesajı yok; ilk değişiklikte oluşturulacak")
+	}
+
 	if err := notify.SetCommands(cfg.TelegramToken, notify.Commands); err != nil {
 		log.Printf("Telegram komut menüsü ayarlanamadı: %v", err)
 	}
@@ -105,7 +116,7 @@ func main() {
 	}
 
 	// Telegram komut ve düğme dinleyicisini arkaplanda başlat
-	b := &bot{cfg: cfg, client: client, program: program}
+	b := &bot{cfg: cfg, client: client, program: program, store: store}
 	go notify.StartPoller(cfg.TelegramToken, b.handle)
 
 	ticker := time.NewTicker(cfg.PollInterval)
@@ -351,6 +362,27 @@ func currentStatus(cfg *config.Config) view.Status {
 		Paused: paused, CourseSelection: active, Reminders: remindersEnabled(),
 		Interval: cfg.PollInterval, LastCheck: lastCheckAt, LastError: lastCheckError, Now: time.Now(),
 	}
+}
+
+// currentSettings menüden değiştirilebilen ayarların şu anki halidir.
+func currentSettings() settings.Settings {
+	paused, active := controlState()
+	return settings.Settings{Paused: paused, CourseSelection: active, Reminders: remindersEnabled()}
+}
+
+// applySettings sabit mesajdan okunan ayarları uygular.
+func applySettings(saved settings.Settings, program *scheduleService) {
+	cacheMu.Lock()
+	isPaused = saved.Paused
+	isDersSecmeActive = saved.CourseSelection
+	cacheMu.Unlock()
+	if program != nil && program.Enabled() != saved.Reminders {
+		if err := program.SetEnabled(saved.Reminders); err != nil {
+			log.Printf("ders uyarı tercihi uygulanamadı: %v", err)
+			return
+		}
+	}
+	remindersActive.Store(saved.Reminders)
 }
 
 func controlState() (paused, courseSelectionActive bool) {

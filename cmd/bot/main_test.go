@@ -15,6 +15,7 @@ import (
 	"notbot/internal/diff"
 	"notbot/internal/notify"
 	"notbot/internal/scraper"
+	"notbot/internal/settings"
 )
 
 func TestTryLoginStopsAfterFiveCaptchaFailures(t *testing.T) {
@@ -656,5 +657,48 @@ func TestRunDoesNotLoopWhenTheSessionStaysClosed(t *testing.T) {
 	logins, _, ok := runWithFakes(t, true, loginPage)
 	if ok || logins != 1 {
 		t.Fatalf("expected a single recovery attempt, ok=%v logins=%d", ok, logins)
+	}
+}
+
+func TestToggleIsSavedToThePinnedSettingsMessage(t *testing.T) {
+	calls := captureTelegramCalls(t)
+	cacheMu.Lock()
+	previousActive := isDersSecmeActive
+	isDersSecmeActive = true
+	cacheMu.Unlock()
+	t.Cleanup(func() { cacheMu.Lock(); isDersSecmeActive = previousActive; cacheMu.Unlock() })
+
+	b := &bot{cfg: &config.Config{TelegramToken: "token", TelegramChatID: "123"}, store: &settings.Store{Token: "token", ChatID: "123"}}
+	b.handle(notify.Update{Command: "cmd_ders_secme_off", ChatID: "123", CallbackID: "cb", MessageID: 42})
+
+	var saved string
+	for _, c := range *calls {
+		if c.method == "sendMessage" && strings.Contains(c.body, "Bot ayarları") {
+			saved = c.body
+		}
+	}
+	if !strings.Contains(saved, "▫️ Ders seçme takibi") {
+		t.Fatalf("turning course selection off was not saved: %#v", *calls)
+	}
+}
+
+func TestApplySettingsRestoresSavedChoices(t *testing.T) {
+	cacheMu.Lock()
+	previousPaused, previousActive := isPaused, isDersSecmeActive
+	cacheMu.Unlock()
+	previousReminders := remindersActive.Load()
+	t.Cleanup(func() {
+		cacheMu.Lock()
+		isPaused, isDersSecmeActive = previousPaused, previousActive
+		cacheMu.Unlock()
+		remindersActive.Store(previousReminders)
+	})
+	program, err := newScheduleService(filepath.Join(t.TempDir(), "s.json"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applySettings(settings.Settings{Paused: true, CourseSelection: false, Reminders: true}, program)
+	if paused, active := controlState(); !paused || active || !remindersEnabled() || !program.Enabled() {
+		t.Fatalf("settings not applied: paused=%v active=%v reminders=%v", paused, active, remindersEnabled())
 	}
 }

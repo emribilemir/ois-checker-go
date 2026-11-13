@@ -9,6 +9,7 @@ import (
 
 	"notbot/config"
 	"notbot/internal/notify"
+	"notbot/internal/settings"
 	"notbot/internal/view"
 )
 
@@ -19,6 +20,17 @@ type bot struct {
 	cfg     *config.Config
 	client  *http.Client
 	program *scheduleService
+	store   *settings.Store
+}
+
+// persist ayarları sabit mesaja yazar; deploy sonrası bot buradan okur.
+func (b *bot) persist() {
+	if b.store == nil {
+		return
+	}
+	if err := b.store.Save(currentSettings()); err != nil {
+		log.Printf("ayarlar sabit mesaja yazılamadı: %v", err)
+	}
 }
 
 func (b *bot) reply(u notify.Update, m notify.Message) {
@@ -116,6 +128,7 @@ func (b *bot) handle(u notify.Update) {
 			return
 		}
 		remindersActive.Store(enabled)
+		defer b.persist()
 		if !enabled {
 			b.settings(u, "Ders uyarıları kapatıldı")
 			return
@@ -138,6 +151,7 @@ func (b *bot) handle(u notify.Update) {
 		} else {
 			b.settings(u, "Not taraması sürüyor")
 		}
+		b.persist()
 
 	case "cmd_ders_secme_on", "cmd_ders_secme_off":
 		active := u.Command == "cmd_ders_secme_on"
@@ -152,6 +166,7 @@ func (b *bot) handle(u notify.Update) {
 		} else {
 			b.settings(u, "Ders seçme takibi kapalı")
 		}
+		b.persist()
 
 	case "cmd_stats":
 		b.toast(u, "")

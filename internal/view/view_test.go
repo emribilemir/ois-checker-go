@@ -21,7 +21,7 @@ var (
 	// Telegram sendMessage HTML'inin kabul ettiği etiketler.
 	plainTags = map[string]bool{"b": true, "i": true, "u": true, "s": true, "a": true, "code": true, "pre": true, "blockquote": true, "tg-spoiler": true}
 	// Zengin mesajda kullandığımız etiketler (hepsi Bot API rich HTML listesinde).
-	richTags = map[string]bool{"h3": true, "h4": true, "p": true, "br": true, "b": true, "i": true, "s": true, "a": true, "mark": true,
+	richTags = map[string]bool{"p": true, "br": true, "b": true, "i": true, "s": true, "a": true, "mark": true,
 		"table": true, "tr": true, "th": true, "td": true, "details": true, "summary": true, "ul": true, "li": true, "input": true,
 		"footer": true, "blockquote": true}
 	voidTags = map[string]bool{"br": true, "input": true}
@@ -103,7 +103,7 @@ func TestGradesListAndWeights(t *testing.T) {
 		{Code: "BLM301", Name: "Staj"},
 	}, "OİS'e giriş yapıldı", now)
 	checkMessage(t, "grades", m)
-	contains(t, "grades rich", m.Rich, "<h4>Veritabanı &lt;Yönetimi&gt;</h4>", "AA · Başarı puanı 92", "<td>Ödev</td><td>%20</td><td><b>85</b></td>", "<td>Final</td><td>—</td>")
+	contains(t, "grades rich", m.Rich, "<p><b>Veritabanı &lt;Yönetimi&gt;</b></p>", "AA · Başarı puanı 92", "<td>Ödev</td><td>%20</td><td><b>85</b></td>", "<td>Final</td><td>—</td>")
 	contains(t, "grades plain", m.Plain, "Ödev <i>(%20)</i>  <b>85</b>", "Final  <b>95</b>")
 	if strings.Contains(m.Rich+m.Plain, "((%20))") || strings.Contains(m.Rich+m.Plain, "(%20)%") {
 		t.Fatalf("weight double-wrapped: %s", m.Plain)

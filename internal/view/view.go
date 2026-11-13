@@ -1,9 +1,12 @@
 // Package view botun bütün Telegram mesajlarını üretir.
 //
+// Başlıklar <h3>/<h4> değil, gövde fontunda kalın satırdır (<p><b>): Telegram
+// başlık etiketlerini ayrı bir fontla çiziyor (Emir, 2026-11-13: beğenilmedi).
+//
 // Her mesajın iki hali vardır: Rich, Telegram'ın zengin mesaj HTML'i (başlık,
 // tablo, açılır bölüm); Plain, zengin mesajı kabul etmeyen durumlar için sade
 // Telegram HTML'i (kalın başlık + alıntı kartları). Rich içinde satır sonu <br>,
-// Plain içinde "\n" kullanılır; Plain'de <p>, <h3>, <table>, <br> geçmez.
+// Plain içinde "\n" kullanılır; Plain'de <p>, <p><b>, <table>, <br> geçmez.
 package view
 
 import (
@@ -93,7 +96,7 @@ func (s Status) lastCheckText() string {
 
 func statusMessage(title string, s Status, keyboard notify.Keyboard) notify.Message {
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>" + title + "</h3><ul>")
+	rich.WriteString("<p><b>" + title + "</b></p><ul>")
 	plain.WriteString("<b>" + title + "</b>\n")
 	for _, item := range s.items() {
 		checked, mark := "", "▫️"
@@ -160,7 +163,7 @@ func Stats(interval time.Duration, checks int64, startedAt, now time.Time) notif
 		{"GC döngüsü", fmt.Sprintf("%d", m.NumGC)},
 	}
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>📊 Sistem Durumu</h3><table compact striped>")
+	rich.WriteString("<p><b>📊 Sistem Durumu</b></p><table compact striped>")
 	plain.WriteString("<b>📊 Sistem Durumu</b>\n<blockquote>")
 	for i, row := range rows {
 		rich.WriteString("<tr><td>" + row[0] + "</td><td><b>" + row[1] + "</b></td></tr>")
@@ -177,7 +180,7 @@ func Stats(interval time.Duration, checks int64, startedAt, now time.Time) notif
 // Restarting yeniden başlatma onayıdır.
 func Restarting() notify.Message {
 	return notify.Message{
-		Rich:  "<h3>🔄 Yeniden başlatılıyor</h3><p>Bot birkaç saniye içinde geri gelir.</p>",
+		Rich:  "<p><b>🔄 Yeniden başlatılıyor</b></p><p>Bot birkaç saniye içinde geri gelir.</p>",
 		Plain: "<b>🔄 Yeniden başlatılıyor</b>\n<i>Bot birkaç saniye içinde geri gelir.</i>",
 	}
 }
@@ -185,7 +188,7 @@ func Restarting() notify.Message {
 // Loading OİS'ten veri beklenirken düğmenin bulunduğu mesajda gösterilir.
 func Loading(title string) notify.Message {
 	return notify.Message{
-		Rich:  "<h3>" + title + "</h3><p>⏳ OİS'ten alınıyor…</p>",
+		Rich:  "<p><b>" + title + "</b></p><p>⏳ OİS'ten alınıyor…</p>",
 		Plain: "<b>" + title + "</b>\n<i>⏳ OİS'ten alınıyor…</i>",
 	}
 }
@@ -197,7 +200,7 @@ func Failure(title, reason, retry string) notify.Message {
 		lines[i] = esc(lines[i])
 	}
 	return notify.Message{
-		Rich:     "<h3>⚠️ " + title + "</h3><blockquote expandable>" + strings.Join(lines, "<br>") + "</blockquote><footer>Biraz sonra tekrar deneyebilirsin.</footer>",
+		Rich:     "<p><b>⚠️ " + title + "</b></p><blockquote expandable>" + strings.Join(lines, "<br>") + "</blockquote><footer>Biraz sonra tekrar deneyebilirsin.</footer>",
 		Plain:    "<b>⚠️ " + title + "</b>\n<blockquote expandable>" + strings.Join(lines, "\n") + "</blockquote>\n<i>Biraz sonra tekrar deneyebilirsin.</i>",
 		Keyboard: backKeyboard(retry),
 	}
@@ -224,7 +227,7 @@ func courseSummary(c scraper.Course) string {
 // Grades not listesidir. subtitle boş olabilir.
 func Grades(courses []scraper.Course, subtitle string, now time.Time) notify.Message {
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>📖 Notlar</h3>")
+	rich.WriteString("<p><b>📖 Notlar</b></p>")
 	plain.WriteString("<b>📖 Notlar</b>")
 	if subtitle != "" {
 		rich.WriteString("<p>" + esc(subtitle) + "</p>")
@@ -233,10 +236,10 @@ func Grades(courses []scraper.Course, subtitle string, now time.Time) notify.Mes
 	plain.WriteString("\n")
 	for _, c := range courses {
 		summary := courseSummary(c)
-		rich.WriteString("<h4>" + esc(c.Name) + "</h4>")
+		rich.WriteString("<p><b>" + esc(c.Name) + "</b></p>")
 		plain.WriteString("<blockquote><b>" + esc(c.Name) + "</b>")
 		if summary != "" {
-			rich.WriteString("<p><b>" + esc(summary) + "</b></p>")
+			rich.WriteString("<p>" + esc(summary) + "</p>")
 			plain.WriteString(" · " + esc(summary))
 		}
 		if len(c.Components) > 0 {
@@ -262,13 +265,13 @@ func Grades(courses []scraper.Course, subtitle string, now time.Time) notify.Mes
 func GradesUnavailable(reason string, at time.Time) notify.Message {
 	if reason == "" {
 		return notify.Message{
-			Rich:     "<h3>⏳ Notlar hazırlanıyor</h3><p>Henüz başarılı bir not kontrolü tamamlanmadı. Bot otomatik olarak yeniden deniyor.</p>",
+			Rich:     "<p><b>⏳ Notlar hazırlanıyor</b></p><p>Henüz başarılı bir not kontrolü tamamlanmadı. Bot otomatik olarak yeniden deniyor.</p>",
 			Plain:    "<b>⏳ Notlar hazırlanıyor</b>\n<i>Henüz başarılı bir not kontrolü tamamlanmadı. Bot otomatik olarak yeniden deniyor.</i>",
 			Keyboard: backKeyboard("cmd_grades"),
 		}
 	}
 	return notify.Message{
-		Rich:     "<h3>⚠️ Notlar henüz alınamadı</h3><blockquote>" + esc(reason) + "</blockquote><footer>Son deneme " + esc(stamp(at)) + " · Bot otomatik olarak yeniden deniyor.</footer>",
+		Rich:     "<p><b>⚠️ Notlar henüz alınamadı</b></p><blockquote>" + esc(reason) + "</blockquote><footer>Son deneme " + esc(stamp(at)) + " · Bot otomatik olarak yeniden deniyor.</footer>",
 		Plain:    "<b>⚠️ Notlar henüz alınamadı</b>\n<blockquote>" + esc(reason) + "</blockquote>\n<i>Son deneme " + esc(stamp(at)) + " · Bot otomatik olarak yeniden deniyor.</i>",
 		Keyboard: backKeyboard("cmd_grades"),
 	}
@@ -309,10 +312,10 @@ func GradeChanges(changes []diff.Change) notify.Message {
 	}
 
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>" + title + "</h3>")
+	rich.WriteString("<p><b>" + title + "</b></p>")
 	plain.WriteString("<b>" + title + "</b>\n")
 	for _, g := range groups {
-		rich.WriteString("<h4>" + esc(g.name) + "</h4>")
+		rich.WriteString("<p><b>" + esc(g.name) + "</b></p>")
 		plain.WriteString("<blockquote><b>" + esc(g.name) + "</b>")
 		var rows strings.Builder
 		for _, ch := range g.changes {
@@ -357,7 +360,7 @@ func Week(entries []schedule.Entry, now time.Time) notify.Message {
 	}
 	if len(entries) == 0 {
 		return notify.Message{
-			Rich:     "<h3>📅 Ders Programı</h3><p>Bu dönemde programda ders görünmüyor.</p>",
+			Rich:     "<p><b>📅 Ders Programı</b></p><p>Bu dönemde programda ders görünmüyor.</p>",
 			Plain:    "<b>📅 Ders Programı</b>\n<i>Bu dönemde programda ders görünmüyor.</i>",
 			Keyboard: backKeyboard("cmd_schedule"),
 		}
@@ -373,7 +376,7 @@ func Week(entries []schedule.Entry, now time.Time) notify.Message {
 
 	var rich, plain strings.Builder
 	var empty []string
-	rich.WriteString("<h3>📅 Ders Programı</h3>")
+	rich.WriteString("<p><b>📅 Ders Programı</b></p>")
 	plain.WriteString("<b>📅 Ders Programı</b>\n")
 	for _, day := range order {
 		list := byDay[day]
@@ -427,7 +430,7 @@ func Reminder(e schedule.Entry, lead time.Duration) notify.Message {
 	if place != "" {
 		when += " · " + esc(place)
 	}
-	rich := "<h3>" + title + "</h3><p><b>" + esc(e.Name) + "</b><br>" + when
+	rich := "<p><b>" + title + "</b></p><p><b>" + esc(e.Name) + "</b><br>" + when
 	plain := "<b>" + title + "</b>\n<blockquote><b>" + esc(e.Name) + "</b>\n" + when
 	if e.Instructor != "" {
 		rich += "<br><i>👤 " + esc(e.Instructor) + "</i>"
@@ -452,7 +455,7 @@ func Exams(list []exams.Exam, now time.Time) notify.Message {
 	}
 
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>📝 Sınav Takvimi</h3>")
+	rich.WriteString("<p><b>📝 Sınav Takvimi</b></p>")
 	plain.WriteString("<b>📝 Sınav Takvimi</b>\n")
 	switch {
 	case len(upcoming) > 0:
@@ -548,10 +551,10 @@ func examClock(e exams.Exam) string {
 // CourseSelectionOpened ders seçme açıldığında gelir (sesli).
 func CourseSelectionOpened(signal string, selected []dersecme.SelectedCourse, oisURL string, now time.Time) notify.Message {
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>🚨 Ders seçme açıldı</h3><p>OİS'te “" + esc(signal) + "” görüldü. <a href=\"" + esc(oisURL) + "\">OİS'e git</a></p>")
+	rich.WriteString("<p><b>🚨 Ders seçme açıldı</b></p><p>OİS'te “" + esc(signal) + "” görüldü. <a href=\"" + esc(oisURL) + "\">OİS'e git</a></p>")
 	plain.WriteString("<b>🚨 Ders seçme açıldı</b>\nOİS'te “" + esc(signal) + "” görüldü. <a href=\"" + esc(oisURL) + "\">OİS'e git</a>\n")
 	if len(selected) > 0 {
-		rich.WriteString(fmt.Sprintf("<h4>Şu an seçili %d ders</h4><ul>", len(selected)))
+		rich.WriteString(fmt.Sprintf("<p><b>Şu an seçili %d ders</b></p><ul>", len(selected)))
 		plain.WriteString(fmt.Sprintf("\n<b>Şu an seçili %d ders</b>\n<blockquote>", len(selected)))
 		for i, c := range selected {
 			rich.WriteString("<li>" + esc(c.Code) + " · " + esc(c.Name) + "</li>")
@@ -573,7 +576,7 @@ const attributionNote = "Bu değişikliğin senin işlemin mi yoksa OİS'in otom
 // SelectionChanges seçili ders listesindeki ekleme / çıkarmalardır (sesli).
 func SelectionChanges(changes []dersecme.SelectionChange) notify.Message {
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>🔔 Ders listen değişti</h3><ul>")
+	rich.WriteString("<p><b>🔔 Ders listen değişti</b></p><ul>")
 	plain.WriteString("<b>🔔 Ders listen değişti</b>\n<blockquote>")
 	for i, ch := range changes {
 		label := "➕ <b>Eklendi:</b> "
@@ -597,7 +600,7 @@ const poolOnlineNote = "Bu havuzda online bilgisi gösterilmiyor; öğretim şek
 // PoolAvailable seçmeli havuzda yer açılan derslerdir (sesli).
 func PoolAvailable(courses []dersecme.PoolCourse) notify.Message {
 	var rich, plain strings.Builder
-	rich.WriteString("<h3>🔔 Seçmeli havuzda yer var</h3><table compact striped><tr><th>Kod</th><th>Ders</th><th>Kalan</th></tr>")
+	rich.WriteString("<p><b>🔔 Seçmeli havuzda yer var</b></p><table compact striped><tr><th>Kod</th><th>Ders</th><th>Kalan</th></tr>")
 	plain.WriteString("<b>🔔 Seçmeli havuzda yer var</b>\n<blockquote>")
 	for i, c := range courses {
 		rich.WriteString(fmt.Sprintf("<tr><td>%s</td><td><b>%s</b></td><td>%d</td></tr>", esc(c.Code), esc(c.Name), c.Quota))

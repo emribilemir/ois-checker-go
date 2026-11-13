@@ -55,12 +55,20 @@ func rejected(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != http.StatusTooManyRequests
 }
 
+// IsRejected, Telegram'ın isteği biçim ya da içerik yüzünden reddettiğini söyler.
+func IsRejected(err error) bool { return rejected(err) }
+
 func notModified(err error) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) && strings.Contains(apiErr.Description, "message is not modified")
 }
 
 func call(token, method string, payload map[string]any) error {
+	return callResult(token, method, payload, nil)
+}
+
+// callResult, Telegram'ın döndürdüğü "result" alanını out'a çözer (out nil olabilir).
+func callResult(token, method string, payload map[string]any, out any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -72,8 +80,9 @@ func call(token, method string, payload map[string]any) error {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	var result struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
+		OK          bool            `json:"ok"`
+		Description string          `json:"description"`
+		Result      json.RawMessage `json:"result"`
 	}
 	_ = json.Unmarshal(raw, &result)
 	if resp.StatusCode != http.StatusOK || !result.OK {
@@ -82,6 +91,11 @@ func call(token, method string, payload map[string]any) error {
 			description = strings.TrimSpace(string(raw))
 		}
 		return &APIError{Method: method, Status: resp.StatusCode, Description: description}
+	}
+	if out != nil && len(result.Result) > 0 {
+		if err := json.Unmarshal(result.Result, out); err != nil {
+			return fmt.Errorf("telegram %s cevabı çözülemedi: %w", method, err)
+		}
 	}
 	return nil
 }
@@ -273,4 +287,45 @@ func isCommand(text string) bool {
 		}
 	}
 	return false
+}
+
+// PinnedMessage sohbette en son sabitlenen mesajın kimliğini ve düz metnini döndürür.
+// Sabitlenmiş mesaj yoksa id 0'dır.
+func PinnedMessage(token, chatID string) (id int, text string, err error) {
+	var chat struct {
+		Pinned *struct {
+			MessageID int    `json:"message_id"`
+			Text      string `json:"text"`
+		} `json:"pinned_message"`
+	}
+	if err := callResult(token, "getChat", map[string]any{"chat_id": chatID}, &chat); err != nil {
+		return 0, "", err
+	}
+	if chat.Pinned == nil {
+		return 0, "", nil
+	}
+	return chat.Pinned.MessageID, chat.Pinned.Text, nil
+}
+
+// SendPinned biçimsiz bir metni sessizce gönderir, sabitler ve kimliğini döndürür.
+func SendPinned(token, chatID, text string) (int, error) {
+	var sent struct {
+		MessageID int `json:"message_id"`
+	}
+	if err := callResult(token, "sendMessage", map[string]any{"chat_id": chatID, "text": text, "disable_notification": true}, &sent); err != nil {
+		return 0, err
+	}
+	if err := call(token, "pinChatMessage", map[string]any{"chat_id": chatID, "message_id": sent.MessageID, "disable_notification": true}); err != nil {
+		return sent.MessageID, err
+	}
+	return sent.MessageID, nil
+}
+
+// EditPlain biçimsiz bir mesajın metnini değiştirir; metin aynıysa hata saymaz.
+func EditPlain(token, chatID string, messageID int, text string) error {
+	err := call(token, "editMessageText", map[string]any{"chat_id": chatID, "message_id": messageID, "text": text})
+	if notModified(err) {
+		return nil
+	}
+	return err
 }
