@@ -10,6 +10,7 @@ import (
 	"notbot/config"
 	"notbot/internal/notify"
 	"notbot/internal/settings"
+	"notbot/internal/telemetry"
 	"notbot/internal/view"
 )
 
@@ -99,6 +100,7 @@ func (b *bot) handle(u notify.Update) {
 			entries, err := b.program.Show()
 			if err != nil {
 				log.Printf("ders programı alınamadı: %v", err)
+				telemetry.Note("schedule_error", err.Error())
 				b.reply(u, view.Failure("Ders programı alınamadı", err.Error(), "cmd_schedule"))
 				return
 			}
@@ -114,6 +116,7 @@ func (b *bot) handle(u notify.Update) {
 			list, err := fetchExamCalendar(b.client, b.cfg)
 			if err != nil {
 				log.Printf("sınav takvimi alınamadı: %v", err)
+				telemetry.Note("exams_error", err.Error())
 				b.reply(u, view.Failure("Sınav takvimi alınamadı", err.Error(), "cmd_exams"))
 				return
 			}

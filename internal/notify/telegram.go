@@ -8,8 +8,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"notbot/internal/telemetry"
 )
 
 var (
@@ -75,7 +78,15 @@ func callResult(token, method string, payload map[string]any, out any) error {
 	}
 	resp, err := telegramSendClient.Post(fmt.Sprintf("%s/bot%s/%s", apiBase, token, method), "application/json", bytes.NewReader(body))
 	if err != nil {
-		return err
+		telemetry.Inc("telegram_error")
+		// Hata metni istek adresini, yani bot anahtarını içerebilir: yalnız yöntem yazılır.
+		telemetry.Note("telegram_error", method+": ağ hatası")
+		// url.Error istek adresini (bot anahtarı dahil) içerir; kayıtlara yalnız asıl hata gitsin.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return fmt.Errorf("telegram %s: %w", method, urlErr.Err)
+		}
+		return fmt.Errorf("telegram %s: bağlantı hatası", method)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -90,8 +101,14 @@ func callResult(token, method string, payload map[string]any, out any) error {
 		if description == "" {
 			description = strings.TrimSpace(string(raw))
 		}
-		return &APIError{Method: method, Status: resp.StatusCode, Description: description}
+		apiErr := &APIError{Method: method, Status: resp.StatusCode, Description: description}
+		if !(method == "editMessageText" && notModified(apiErr)) {
+			telemetry.Inc("telegram_error")
+			telemetry.Note("telegram_error", apiErr.Error())
+		}
+		return apiErr
 	}
+	telemetry.Inc("telegram_ok")
 	if out != nil && len(result.Result) > 0 {
 		if err := json.Unmarshal(result.Result, out); err != nil {
 			return fmt.Errorf("telegram %s cevabı çözülemedi: %w", method, err)
@@ -139,6 +156,7 @@ func Send(token, chatID string, m Message) error {
 			return err
 		}
 		log.Printf("zengin mesaj reddedildi, sade biçim gönderiliyor: %v", err)
+		telemetry.Inc("telegram_rich_fallback")
 	}
 	return call(token, "sendMessage", withCommon(map[string]any{
 		"chat_id": chatID, "text": m.Plain, "parse_mode": "HTML",
@@ -162,6 +180,7 @@ func Edit(token, chatID string, messageID int, m Message) error {
 			return err
 		}
 		log.Printf("zengin düzenleme reddedildi, sade biçim deneniyor: %v", err)
+		telemetry.Inc("telegram_rich_fallback")
 	}
 	err := call(token, "editMessageText", withCommon(map[string]any{
 		"chat_id": chatID, "message_id": messageID, "text": m.Plain, "parse_mode": "HTML",

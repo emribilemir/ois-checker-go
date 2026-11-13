@@ -50,6 +50,7 @@ is a continuous process and intentionally does not exit after a single check.
 - Elective pool snapshots are stored next to `STATE_FILE` with an `.electives` suffix. `ELECTIVE_POOL_PATHS` defaults to the observed Bölüm Seçmeli pool path; add other comma-separated pool paths when available. The bot also discovers pool paths from visible "Ders Seç" buttons.
 - Set `POLL_INTERVAL_SECONDS=300` for five-minute OIS checks.
 - Use `/` as the health-check path.
+- `/status` returns JSON with the deployed commit, uptime, settings, last check, login / session / OCR / Telegram counters and the last 60 events. It holds no grades, course names or credentials, and numbers of six or more digits are masked, so it can stay public.
 - The `/` health check returns `503` when no polling cycle has completed for ten minutes (or two poll intervals, whichever is longer), allowing Render to restart a stuck instance.
 - **⚙️ Ayarlar → Not taramasını durdur** pauses grade checks only; course-selection tracking remains active when enabled separately. When grade checks are paused and course-selection tracking is off, the bot skips the OIS login entirely.
 - **📅 Program** düğmesi veya `/program` güncel programı OİS'ten alır. Her gün açılır bir bölümdür; bugün (ya da sıradaki dersli gün) açık gelir, online dersler 🌐 ile gösterilir.

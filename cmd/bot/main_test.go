@@ -16,6 +16,7 @@ import (
 	"notbot/internal/notify"
 	"notbot/internal/scraper"
 	"notbot/internal/settings"
+	"notbot/internal/telemetry"
 )
 
 func TestTryLoginStopsAfterFiveCaptchaFailures(t *testing.T) {
@@ -700,5 +701,22 @@ func TestApplySettingsRestoresSavedChoices(t *testing.T) {
 	applySettings(settings.Settings{Paused: true, CourseSelection: false, Reminders: true}, program)
 	if paused, active := controlState(); !paused || active || !remindersEnabled() || !program.Enabled() {
 		t.Fatalf("settings not applied: paused=%v active=%v reminders=%v", paused, active, remindersEnabled())
+	}
+}
+
+func TestStatusEndpointIsJSONWithoutPersonalNumbers(t *testing.T) {
+	telemetry.Reset()
+	recordCheckFailure("sinav sonuc sayfasi ayrıştırılamadı: final=https://ois.example/ogrenciler/belge/ogrsinavsonuc/ogrenci_no/240123456")
+	telemetry.Inc("login_ok")
+	recorder := httptest.NewRecorder()
+	statusHandler(&config.Config{PollInterval: 5 * time.Minute}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("status is not JSON: %v\n%s", err, recorder.Body.String())
+	}
+	text := recorder.Body.String()
+	if strings.Contains(text, "240123456") || !strings.Contains(text, `"login_ok": 1`) || body["poll_interval"] != "5m0s" {
+		t.Fatalf("unexpected status body:\n%s", text)
 	}
 }

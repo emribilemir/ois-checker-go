@@ -17,6 +17,8 @@ import (
 	"unicode"
 
 	"golang.org/x/image/draw"
+
+	"notbot/internal/telemetry"
 )
 
 const candidateAgreementBonus = 30.0
@@ -146,8 +148,14 @@ func Solve(imgBytes []byte) (string, error) {
 		log.Printf("[ocr] variant=%s psm=%d text=%q confidence=%.1f", pass.variant, pass.psm, candidate.text, candidate.confidence)
 		return candidate, nil
 	})
+	telemetry.Inc("ocr_solve")
+	telemetry.Set("ocr_last_passes", fmt.Sprintf("%d/%d", runs, len(passes)))
 	if runs < len(passes) {
 		log.Printf("[ocr] erken durdu: %d/%d okuma yeterli oldu", runs, len(passes))
+		telemetry.Inc("ocr_early_stop")
+	}
+	if lastRunErr != nil {
+		telemetry.Note("ocr_error", lastRunErr.Error())
 	}
 
 	if len(candidates) == 0 {

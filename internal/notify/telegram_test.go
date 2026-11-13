@@ -154,3 +154,15 @@ func TestCommandNameAcceptsMenuCommands(t *testing.T) {
 		t.Fatal("unknown commands must be ignored")
 	}
 }
+
+func TestNetworkErrorsDoNotLeakTheBotToken(t *testing.T) {
+	previous := http.DefaultTransport
+	http.DefaultTransport = telegramRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("dial tcp: connection refused")
+	})
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	err := Send("123456:SECRET-TOKEN", "1", Message{Plain: "x"})
+	if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

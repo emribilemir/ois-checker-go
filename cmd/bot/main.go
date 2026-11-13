@@ -21,6 +21,7 @@ import (
 	"notbot/internal/scraper"
 	"notbot/internal/session"
 	"notbot/internal/settings"
+	"notbot/internal/telemetry"
 	"notbot/internal/view"
 )
 
@@ -84,14 +85,18 @@ func main() {
 	}()
 
 	log.Printf("Bot başladı. Kontrol aralığı: %s", cfg.PollInterval)
+	telemetry.Note("start", "sürüm "+os.Getenv("RENDER_GIT_COMMIT"))
 
 	store := &settings.Store{Token: cfg.TelegramToken, ChatID: cfg.TelegramChatID}
 	if saved, ok, err := store.Load(); err != nil {
 		log.Printf("ayarlar Telegram'dan okunamadı, varsayılanlar kullanılıyor: %v", err)
+		telemetry.Note("settings", "okunamadı: "+err.Error())
 	} else if ok {
 		applySettings(saved, program)
 		log.Printf("ayarlar sabit mesajdan yüklendi: %+v", saved)
+		telemetry.Note("settings", fmt.Sprintf("sabit mesajdan yüklendi: %+v", saved))
 	} else {
+		telemetry.Note("settings", "sabit ayar mesajı yok, varsayılanlar")
 		log.Println("sabit ayar mesajı yok; ilk değişiklikte oluşturulacak")
 	}
 
@@ -108,6 +113,7 @@ func main() {
 	if port := os.Getenv("PORT"); port != "" {
 		go func() {
 			http.Handle("/", healthHandler(cfg.PollInterval))
+			http.Handle("/status", statusHandler(cfg))
 			log.Printf("Render Web Service için PORT %s dinleniyor...", port)
 			if err := http.ListenAndServe(":"+port, nil); err != nil {
 				log.Printf("HTTP Sunucu hatası: %v", err)
@@ -203,11 +209,15 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 		return nil, true
 	}
 	started := time.Now()
+	telemetry.Inc("cycle")
 	reused := false
 	if active, reason := checkSession(client, cfg); active {
 		reused = true
+		telemetry.Inc("session_reused")
 		log.Println("[tur] OİS oturumu açık; CAPTCHA'lı giriş atlandı")
 	} else {
+		telemetry.Inc("session_missing")
+		telemetry.Set("session_missing_reason", reason)
 		log.Printf("[tur] OİS oturumu yok (%s); giriş yapılıyor", reason)
 		if !loginForCycle(client, cfg) {
 			return nil, false
@@ -217,12 +227,15 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 	if expired && reused {
 		// Oturum kontrolden sonra kapandı (ör. tarayıcıdan girildi): bir kez giriş yapıp turu tekrarla.
 		log.Println("[tur] OİS oturumu tur sırasında kapandı; yeniden giriş yapılıyor")
+		telemetry.Note("session_closed_mid_cycle", "")
 		if !loginForCycle(client, cfg) {
 			return nil, false
 		}
 		courses, ok, _ = runCycle(client, cfg)
 	}
-	log.Printf("[tur] %s sürdü (giriş atlandı: %v)", time.Since(started).Round(100*time.Millisecond), reused && !expired)
+	took := time.Since(started).Round(100 * time.Millisecond)
+	log.Printf("[tur] %s sürdü (giriş atlandı: %v)", took, reused && !expired)
+	telemetry.Set("last_cycle_duration", took.String())
 	return courses, ok
 }
 
@@ -254,9 +267,11 @@ func tryLogin(client *http.Client, cfg *config.Config, login loginFunction, paus
 	lastReason := "login_rejected"
 	for attempt := 0; attempt < maxLoginAttempts; attempt++ {
 		log.Printf("OIS'e giriş deneniyor (Deneme %d/%d)...", attempt+1, maxLoginAttempts)
+		telemetry.Inc("login_attempt")
 		result, err := login(client, cfg)
 		if err != nil {
 			log.Printf("login hata: %v", err)
+			telemetry.Note("login_fail", err.Error())
 			lastReason = err.Error()
 			if attempt+1 < maxLoginAttempts {
 				pause(2 * time.Second)
@@ -264,9 +279,11 @@ func tryLogin(client *http.Client, cfg *config.Config, login loginFunction, paus
 			continue
 		}
 		if result.Success {
+			telemetry.Inc("login_ok")
 			return true, ""
 		}
 		lastReason = result.Reason
+		telemetry.Note("login_fail", result.Reason)
 		if result.Reason == "invalid_credentials" {
 			log.Printf("login başarısız [%d/%d] (%s), tekrar denenmeyecek", attempt+1, maxLoginAttempts, result.Reason)
 			return false, lastReason
@@ -333,6 +350,8 @@ func runCycle(client *http.Client, cfg *config.Config) ([]scraper.Course, bool, 
 }
 
 func recordCheckFailure(reason string) {
+	telemetry.Inc("check_failed")
+	telemetry.Note("check_failed", reason)
 	statusMu.Lock()
 	lastCheckError = reason
 	lastCheckAt = time.Now()
@@ -340,6 +359,7 @@ func recordCheckFailure(reason string) {
 }
 
 func recordCheckSuccess() {
+	telemetry.Inc("check_ok")
 	statusMu.Lock()
 	lastCheckError = ""
 	lastCheckAt = time.Now()
