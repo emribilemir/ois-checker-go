@@ -95,7 +95,7 @@ func TestFetchExplainsWhatItSawWhenCalendarIsMissing(t *testing.T) {
 		switch r.URL.Path {
 		case "/":
 			w.Write([]byte(`<a href="/ogrenciler/ders">Derslerim</a>`))
-		case "/ogrenciler/belge/ogrsinavprogrami":
+		case "/ogrenciler/belge/sinavprogrami":
 			w.Write([]byte(`<table><tr><th>Dönem</th><th>Açıklama</th></tr></table>`))
 		default:
 			http.NotFound(w, r)
@@ -108,7 +108,7 @@ func TestFetchExplainsWhatItSawWhenCalendarIsMissing(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	message := err.Error()
-	for _, want := range []string{"Menüde sınav takvimi bağlantısı bulunamadı", "/ogrenciler/belge/ogrsinavprogrami: tablo tanınmadı, başlıklar: Dönem, Açıklama", "/ogrenciler/belge/ogrsinavtakvimi: HTTP 404"} {
+	for _, want := range []string{"Menüde sınav takvimi bağlantısı bulunamadı", "/ogrenciler/belge/sinavprogrami: tablo tanınmadı, başlıklar: Dönem, Açıklama"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("diagnostics missing %q:\n%s", want, message)
 		}
@@ -154,5 +154,42 @@ func TestFormatShowsUpcomingExamsGroupedByDay(t *testing.T) {
 func TestFormatEmptyCalendar(t *testing.T) {
 	if message := Format(nil, time.Now()); !strings.Contains(message, "henüz sınav yok") {
 		t.Fatalf("unexpected empty message: %s", message)
+	}
+}
+
+func TestFetchReadsTheKnownCalendarPageWithoutVisitingOtherPages(t *testing.T) {
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		if r.URL.Path == "/ogrenciler/belge/sinavprogrami" {
+			w.Write([]byte(`<table><tr><th>Ders Adı</th><th>Sınav Tarihi</th><th>Saat</th><th>Derslik</th></tr><tr><td>Robotik</td><td>27.11.2026</td><td>10:00</td><td>A-1</td></tr></table>`))
+			return
+		}
+		http.Redirect(w, r, "/auth/logout", http.StatusFound)
+	}))
+	defer server.Close()
+
+	exams, err := Fetch(server.Client(), &config.Config{UniversityURL: server.URL})
+	if err != nil || len(exams) != 1 || exams[0].Place != "A-1" {
+		t.Fatalf("expected the calendar page, exams=%#v err=%v", exams, err)
+	}
+	if len(requested) != 1 {
+		t.Fatalf("a readable calendar must need one request, got %v", requested)
+	}
+}
+
+func TestFetchTreatsLogoutRedirectAsExpiredSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/logout" {
+			w.Write([]byte(`çıkış`))
+			return
+		}
+		http.Redirect(w, r, "/auth/logout", http.StatusFound)
+	}))
+	defer server.Close()
+
+	_, err := Fetch(server.Client(), &config.Config{UniversityURL: server.URL})
+	if !errors.Is(err, ErrSessionExpired) {
+		t.Fatalf("expected ErrSessionExpired, got %v", err)
 	}
 }

@@ -1,13 +1,14 @@
 // Package exams OİS'teki kişisel sınav takvimini bulur, okur ve Telegram için biçimler.
 //
-// Sınav takvimi sayfasının adresi ve tablo düzeni sabit kabul edilmez: sayfa önce
-// OİS menüsündeki bağlantıdan bulunur, sonra bilinen aday yollar denenir. Tablo,
+// Sayfa /ogrenciler/belge/sinavprogrami adresinden okunur; okunamazsa yalnız OİS
+// menüsünde görünen sınav bağlantıları denenir. Tablo düzeni sabit kabul edilmez,
 // sütun başlıklarından (Tarih, Saat, Ders, Derslik ...) tanınır. Okunamazsa hata
 // mesajı yalnız denenen adresleri, menüdeki sınav bağlantılarının adını ve tablo
 // başlıklarını içerir; satır içeriği (kişisel veri) içermez.
 package exams
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,12 +35,10 @@ type Exam struct {
 	Place string
 }
 
-// candidatePaths menüde bağlantı bulunamazsa denenir. Diğer öğrenci belgeleriyle
-// (ogrsinavsonuc, ogrdersprogrami) aynı adlandırmayı izler.
-var candidatePaths = []string{
-	"/ogrenciler/belge/ogrsinavprogrami",
-	"/ogrenciler/belge/ogrsinavtakvimi",
-}
+// calendarPath Atlas OİS'teki sınav programı sayfasıdır. OİS bilinmeyen
+// adresleri /auth/logout'a yönlendirdiği için adres tahmini yapılmaz; bu sayfa
+// okunamazsa yalnız menüde gerçekten görünen bağlantılar denenir.
+const calendarPath = "/ogrenciler/belge/sinavprogrami"
 
 var linkSignals = []string{
 	"sinav program", "sinavprogram", "sinav takvim", "sinavtakvim",
@@ -55,46 +54,62 @@ func Fetch(client *http.Client, cfg *config.Config) ([]Exam, error) {
 		return nil, fmt.Errorf("geçersiz OİS adresi")
 	}
 
-	var report []string
+	known := base.ResolveReference(&url.URL{Path: calendarPath}).String()
+	exams, note, err := readPage(client, cfg, known)
+	if err != nil || note == "" {
+		return exams, err
+	}
+	report := []string{note}
+
 	home, homeURL, err := get(client, cfg, base.String())
-	if err != nil {
+	if errors.Is(err, ErrSessionExpired) {
 		return nil, err
 	}
-	links, labels := discoverLinks(home, homeURL, base)
-	if len(labels) > 0 {
-		report = append(report, "Menüdeki sınav bağlantıları: "+strings.Join(labels, " | "))
+	if err != nil {
+		report = append(report, "ana sayfa: "+err.Error())
 	} else {
-		report = append(report, "Menüde sınav takvimi bağlantısı bulunamadı")
-	}
-
-	targets := links
-	for _, path := range candidatePaths {
-		targets = appendUnique(targets, base.ResolveReference(&url.URL{Path: path}).String())
-	}
-	for _, target := range targets {
-		body, finalURL, err := get(client, cfg, target)
-		if err != nil {
-			if err == ErrSessionExpired {
-				return nil, err
-			}
-			report = append(report, fmt.Sprintf("%s: %v", pathOf(target), err))
-			continue
-		}
-		exams, headers, ok := Parse(body)
-		if ok {
-			return exams, nil
-		}
-		if len(headers) > 0 {
-			report = append(report, fmt.Sprintf("%s: tablo tanınmadı, başlıklar: %s", pathOf(finalURL.String()), strings.Join(headers, " / ")))
+		links, labels := discoverLinks(home, homeURL, base)
+		if len(labels) > 0 {
+			report = append(report, "Menüdeki sınav bağlantıları: "+strings.Join(labels, " | "))
 		} else {
-			report = append(report, fmt.Sprintf("%s: sayfada tablo yok", pathOf(finalURL.String())))
+			report = append(report, "Menüde sınav takvimi bağlantısı bulunamadı")
+		}
+		for _, link := range links {
+			if link == known {
+				continue
+			}
+			exams, note, err := readPage(client, cfg, link)
+			if err != nil || note == "" {
+				return exams, err
+			}
+			report = append(report, note)
 		}
 	}
 	return nil, fmt.Errorf("sınav takvimi okunamadı\n- %s", strings.Join(report, "\n- "))
 }
 
+// readPage bir sayfayı okur. Takvim tanınırsa note boştur; tanınmazsa note
+// tanı satırıdır. err yalnız oturum kapandığında döner.
+func readPage(client *http.Client, cfg *config.Config, target string) ([]Exam, string, error) {
+	body, finalURL, err := get(client, cfg, target)
+	if errors.Is(err, ErrSessionExpired) {
+		return nil, "", err
+	}
+	if err != nil {
+		return nil, fmt.Sprintf("%s: %v", pathOf(target), err), nil
+	}
+	exams, headers, ok := Parse(body)
+	if ok {
+		return exams, "", nil
+	}
+	if len(headers) > 0 {
+		return nil, fmt.Sprintf("%s: tablo tanınmadı, başlıklar: %s", pathOf(finalURL.String()), strings.Join(headers, " / ")), nil
+	}
+	return nil, fmt.Sprintf("%s: sayfada tablo yok (%d bayt)", pathOf(finalURL.String()), len(body)), nil
+}
+
 // ErrSessionExpired, OİS giriş sayfasına düşüldüğünde döner.
-var ErrSessionExpired = fmt.Errorf("OİS oturumu sona erdi")
+var ErrSessionExpired = errors.New("OİS oturumu sona erdi")
 
 func get(client *http.Client, cfg *config.Config, target string) ([]byte, *url.URL, error) {
 	req, err := http.NewRequest(http.MethodGet, target, nil)

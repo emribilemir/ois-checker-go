@@ -22,6 +22,9 @@ func fetchExamCalendar(client *http.Client, cfg *config.Config, now time.Time) (
 			return "", fmt.Errorf("OİS girişi başarısız: %s (sınav takvimi hatası: %w)", reason, err)
 		}
 		list, err = exams.Fetch(client, cfg)
+		if errors.Is(err, exams.ErrSessionExpired) {
+			return "", fmt.Errorf("giriş başarılı olduğu halde sınav programı sayfası OİS oturumunu kapattı; sayfa şu an öğrenciye kapalı olabilir")
+		}
 	}
 	if err != nil {
 		return "", err
