@@ -94,7 +94,7 @@ func main() {
 	// endpoint 503 döndürerek Render sağlık kontrolünün örneği yeniden başlatmasını sağlar.
 	if port := os.Getenv("PORT"); port != "" {
 		go func() {
-			http.Handle("/", healthHandler())
+			http.Handle("/", healthHandler(cfg.PollInterval))
 			log.Printf("Render Web Service için PORT %s dinleniyor...", port)
 			if err := http.ListenAndServe(":"+port, nil); err != nil {
 				log.Printf("HTTP Sunucu hatası: %v", err)
@@ -235,7 +235,9 @@ func main() {
 				if cbqID != "" {
 					notify.AnswerCallback(cfg.TelegramToken, cbqID, "Henüz sistem notları çekmedi, 1 dakika bekle!")
 				}
-				notify.SendTelegram(cfg.TelegramToken, chatID, gradesUnavailableMessage())
+				if err := notify.SendHTML(cfg.TelegramToken, chatID, gradesUnavailableMessage()); err != nil {
+					log.Printf("not durumu Telegram gönderim hatası: %v", err)
+				}
 			} else {
 				if cbqID != "" {
 					notify.AnswerCallback(cfg.TelegramToken, cbqID, "Notların hazır!")
@@ -295,7 +297,17 @@ func main() {
 	}
 }
 
-func healthHandler() http.Handler {
+// staleThreshold, uzun kontrol aralıklarında sağlıklı bir döngünün iki tur
+// arasında 503 almasını önler.
+func staleThreshold(pollInterval time.Duration) time.Duration {
+	if limit := 2 * pollInterval; limit > pollerStaleAfter {
+		return limit
+	}
+	return pollerStaleAfter
+}
+
+func healthHandler(pollInterval time.Duration) http.Handler {
+	staleAfter := staleThreshold(pollInterval)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		statusMu.RLock()
 		checkedAt := lastCheckAt
@@ -303,7 +315,7 @@ func healthHandler() http.Handler {
 		if checkedAt.IsZero() {
 			checkedAt = processStartedAt
 		}
-		if time.Since(checkedAt) > pollerStaleAfter {
+		if time.Since(checkedAt) > staleAfter {
 			http.Error(w, "OIS polling loop is stalled", http.StatusServiceUnavailable)
 			return
 		}
@@ -339,6 +351,12 @@ func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
 	oisMu.Lock()
 	defer oisMu.Unlock()
 	atomic.AddInt64(&checkCount, 1)
+	if paused, active := controlState(); paused && !active {
+		// Ne not ne ders seçme taranıyor: OİS'e boşuna CAPTCHA'lı giriş yapma.
+		recordCheckSuccess()
+		log.Println("Not taraması duraklatıldı ve ders seçme takibi kapalı; OİS'e giriş atlandı")
+		return nil, true
+	}
 	loginOK, failureReason := tryLogin(client, cfg, auth.Login, time.Sleep)
 	if !loginOK {
 		reason := fmt.Sprintf("%d denemede giriş sağlanamadı (son hata: %s)", maxLoginAttempts, failureReason)
@@ -452,7 +470,9 @@ func gradesUnavailableMessage() string {
 	if reason == "" {
 		return "⚠️ Henüz başarılı bir not kontrolü tamamlanmadı. Bot otomatik olarak yeniden deniyor."
 	}
-	return fmt.Sprintf("⚠️ Henüz güncel notlar alınamadı.\n\nSon hata: %s\nSon deneme: %s\n\nBot otomatik olarak yeniden deniyor.", reason, checkedAt.Format("02/01/2006 15:04:05"))
+	// HTML olarak gönderilir: hata metinleri "ocr_fail", "session_expired" gibi alt
+	// çizgiler içerir ve Telegram Markdown bunları kapanmamış italik sayıp mesajı reddeder.
+	return fmt.Sprintf("⚠️ Henüz güncel notlar alınamadı.\n\nSon hata: %s\nSon deneme: %s\n\nBot otomatik olarak yeniden deniyor.", html.EscapeString(reason), checkedAt.Format("02/01/2006 15:04:05"))
 }
 
 func controlState() (paused, courseSelectionActive bool) {

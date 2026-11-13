@@ -435,7 +435,7 @@ func TestHealthHandlerRejectsAStalledPollingLoop(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	healthHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	healthHandler(time.Minute).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected a stalled poller to report 503, got %d with body %q", recorder.Code, recorder.Body.String())
@@ -454,9 +454,62 @@ func TestHealthHandlerAcceptsARecentlyCompletedPollingLoop(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	healthHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	healthHandler(time.Minute).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected a live poller to report 200, got %d with body %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHealthHandlerToleratesLongPollIntervals(t *testing.T) {
+	statusMu.Lock()
+	previousCheckAt := lastCheckAt
+	lastCheckAt = time.Now().Add(-20 * time.Minute)
+	statusMu.Unlock()
+	t.Cleanup(func() {
+		statusMu.Lock()
+		lastCheckAt = previousCheckAt
+		statusMu.Unlock()
+	})
+
+	recorder := httptest.NewRecorder()
+	healthHandler(15*time.Minute).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("a 15-minute poll interval must not look stalled after 20 minutes, got %d", recorder.Code)
+	}
+}
+
+func TestUnavailableGradesMessageEscapesLoginReasonForHTML(t *testing.T) {
+	recordCheckFailure("5 denemede giriş sağlanamadı (son hata: ocr_fail) <tablo>")
+
+	message := gradesUnavailableMessage()
+	if !strings.Contains(message, "ocr_fail") || !strings.Contains(message, "&lt;tablo&gt;") || strings.Contains(message, "<tablo>") {
+		t.Fatalf("expected an HTML-safe failure reason, got %q", message)
+	}
+}
+
+func TestRunSkipsOISLoginWhenNothingIsMonitored(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cacheMu.Lock()
+	previousPaused, previousActive := isPaused, isDersSecmeActive
+	isPaused, isDersSecmeActive = true, false
+	cacheMu.Unlock()
+	t.Cleanup(func() {
+		cacheMu.Lock()
+		isPaused, isDersSecmeActive = previousPaused, previousActive
+		cacheMu.Unlock()
+	})
+
+	cfg := &config.Config{UniversityURL: server.URL, StateFile: filepath.Join(t.TempDir(), "state.json")}
+	courses, ok := run(server.Client(), cfg)
+	if !ok || courses != nil || requests != 0 {
+		t.Fatalf("expected a no-op cycle without OIS traffic, ok=%v courses=%v requests=%d", ok, courses, requests)
 	}
 }

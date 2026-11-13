@@ -13,6 +13,11 @@ import (
 	"notbot/internal/schedule"
 )
 
+const (
+	scheduleRefreshEvery = 30 * time.Minute
+	scheduleRetryAfter   = 5 * time.Minute
+)
+
 func remindersEnabled() bool { return remindersActive.Load() }
 
 func fetchAuthenticatedSchedule(client *http.Client, cfg *config.Config) ([]schedule.Entry, error) {
@@ -36,6 +41,7 @@ type scheduleService struct {
 	state     schedule.State
 	entries   []schedule.Entry
 	fetchedAt time.Time
+	failedAt  time.Time
 	fetch     func() ([]schedule.Entry, error)
 	send      func(string) error
 }
@@ -63,6 +69,10 @@ func (s *scheduleService) SetEnabled(enabled bool) error {
 		return err
 	}
 	s.state = next
+	if enabled {
+		// Kullanıcı uyarıları yeniden açınca bekleme süresini beklemeden programı dene.
+		s.failedAt = time.Time{}
+	}
 	return nil
 }
 
@@ -76,36 +86,52 @@ func (s *scheduleService) Show() (string, error) {
 	s.mu.Lock()
 	s.entries = entries
 	s.fetchedAt = time.Now()
+	s.failedAt = time.Time{}
 	s.mu.Unlock()
 	return schedule.FormatWeek(entries), nil
+}
+
+// needsRefreshLocked, s.mu tutulurken çağrılır.
+func (s *scheduleService) needsRefreshLocked(now time.Time) bool {
+	stale := s.fetchedAt.IsZero() || now.Sub(s.fetchedAt) >= scheduleRefreshEvery
+	backingOff := !s.failedAt.IsZero() && now.Sub(s.failedAt) < scheduleRetryAfter
+	return stale && !backingOff
 }
 
 func (s *scheduleService) Check(now time.Time) error {
 	s.mu.Lock()
 	enabled := s.state.Enabled
-	needsRefresh := s.fetchedAt.IsZero() || now.Sub(s.fetchedAt) >= 30*time.Minute
+	needsRefresh := s.needsRefreshLocked(now)
 	s.mu.Unlock()
 	if !enabled {
 		return nil
 	}
+	var refreshErr error
 	if needsRefresh {
 		s.refreshMu.Lock()
 		s.mu.Lock()
 		stillEnabled := s.state.Enabled
-		needsRefresh = s.fetchedAt.IsZero() || now.Sub(s.fetchedAt) >= 30*time.Minute
+		needsRefresh = s.needsRefreshLocked(now)
 		s.mu.Unlock()
 		if stillEnabled && needsRefresh {
 			entries, err := s.fetch()
-			if err != nil {
-				s.refreshMu.Unlock()
-				return err
-			}
 			s.mu.Lock()
-			if s.state.Enabled {
+			if err != nil {
+				// OİS'e her dakika CAPTCHA'lı giriş denemesi yapma; eldeki program
+				// varsa uyarılar onunla sürer.
+				s.failedAt = now
+				refreshErr = err
+			} else if s.state.Enabled {
 				s.entries = entries
 				s.fetchedAt = now
+				s.failedAt = time.Time{}
 			}
+			hasEntries := s.entries != nil
 			s.mu.Unlock()
+			if refreshErr != nil && !hasEntries {
+				s.refreshMu.Unlock()
+				return refreshErr
+			}
 		}
 		s.refreshMu.Unlock()
 	}
@@ -128,6 +154,9 @@ func (s *scheduleService) Check(now time.Time) error {
 		if err := schedule.SaveState(s.statePath, s.state); err != nil {
 			return err
 		}
+	}
+	if refreshErr != nil {
+		return fmt.Errorf("ders programı yenilenemedi, önceki program kullanıldı: %w", refreshErr)
 	}
 	return nil
 }

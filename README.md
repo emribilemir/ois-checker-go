@@ -46,10 +46,10 @@ is a continuous process and intentionally does not exit after a single check.
 - Elective pool snapshots are stored next to `STATE_FILE` with an `.electives` suffix. `ELECTIVE_POOL_PATHS` defaults to the observed Bölüm Seçmeli pool path; add other comma-separated pool paths when available. The bot also discovers pool paths from visible "Ders Seç" buttons.
 - Set `POLL_INTERVAL_SECONDS=300` for five-minute OIS checks.
 - Use `/` as the health-check path.
-- The `/` health check returns `503` when no polling cycle has completed for ten minutes, allowing Render to restart a stuck instance.
-- Telegram's **Taramayı Durdur** button pauses grade checks only; course-selection tracking remains active when enabled separately.
+- The `/` health check returns `503` when no polling cycle has completed for ten minutes (or two poll intervals, whichever is longer), allowing Render to restart a stuck instance.
+- Telegram's **Taramayı Durdur** button pauses grade checks only; course-selection tracking remains active when enabled separately. When grade checks are paused and course-selection tracking is off, the bot skips the OIS login entirely.
 - Telegram'da **📅 Ders Programım** düğmesine basarak veya `/program` yazarak güncel programı OİS'ten alabilirsiniz. Günler ve saatler telefon ekranında okunacak şekilde listelenir; online dersler 🌐 ile gösterilir.
-- **🔔 Ders Uyarılarını Aç/Kapat** düğmesi ders başlamadan 15 dakika önce gönderilen uyarıları yönetir. Uyarılar ilk kurulumda kapalıdır ve not taraması düğmesinden bağımsızdır. Açıkken program her 30 dakikada bir yenilenir ve uyarı saati dakikada bir kontrol edilir (Europe/Istanbul).
+- **🔔 Ders Uyarılarını Aç/Kapat** düğmesi ders başlamadan 15 dakika önce gönderilen uyarıları yönetir. Uyarılar ilk kurulumda kapalıdır ve not taraması düğmesinden bağımsızdır. Açıkken program her 30 dakikada bir yenilenir ve uyarı saati dakikada bir kontrol edilir (Europe/Istanbul). OİS'ten program alınamazsa uyarılar son alınan programla sürer ve yeni deneme 5 dakika sonra yapılır.
 - Uyarı tercihi ve aynı ders için gönderilmiş uyarılar `STATE_FILE.schedule` dosyasında tutulur. Kalıcı depolama bağlı değilse yeniden başlatma sonrasında tercih sıfırlanabilir.
 - Free Render web services still require an external HTTP request at least once
   every 15 minutes to avoid idle spin-down. A 5-10 minute uptime check is suitable.
