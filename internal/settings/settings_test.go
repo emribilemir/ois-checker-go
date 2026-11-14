@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTrip func(*http.Request) (*http.Response, error)
@@ -48,11 +49,17 @@ func fakeTelegram(t *testing.T, pinnedID int, pinnedText string, failing map[str
 }
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
-	for _, s := range []Settings{{}, {Paused: true}, {CourseSelection: true, Reminders: true}, {Paused: true, CourseSelection: true, Reminders: true}} {
+	until := time.Date(2026, 12, 22, 0, 0, 0, 0, time.UTC)
+	for _, s := range []Settings{{}, {Paused: true}, {CourseSelection: true, Reminders: true}, {Paused: true, CourseSelection: true, Reminders: true}, {AwakeUntil: until}} {
 		got, ok := Decode(Encode(s))
 		if !ok || got != s {
 			t.Fatalf("round trip %+v -> %+v ok=%v\n%s", s, got, ok, Encode(s))
 		}
+	}
+	// Bu alan eklenmeden önce sabitlenmiş mesajlar da okunmalı.
+	old := "⚙️ Bot ayarları\n✅ Not taraması\n▫️ Ders seçme takibi\n▫️ Ders uyarıları\n\nBot ayarlarını bu sabit mesajda saklar."
+	if got, ok := Decode(old); !ok || !got.AwakeUntil.IsZero() || got.CourseSelection {
+		t.Fatalf("old pinned message not read: %+v ok=%v", got, ok)
 	}
 	if _, ok := Decode("Toplantı notları\n✅ Not taraması"); ok {
 		t.Fatal("a foreign pinned message must not be read as settings")

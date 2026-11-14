@@ -30,7 +30,8 @@ func startKeepAlive(baseURL string, every time.Duration, client *http.Client, wa
 	go func() {
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
-		wasAwake := true
+		// Bot dönem dışında uyandırıldıysa (ör. saatlik GitHub işi) uyku bildirimi tekrar gitmesin.
+		wasAwake, _ := wanted(time.Now())
 		for {
 			select {
 			case <-done:

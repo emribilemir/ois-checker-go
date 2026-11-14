@@ -149,9 +149,30 @@ func Settings(s Status) notify.Message {
 	}
 	return statusMessage("⚙️ Ayarlar", s, notify.Keyboard{
 		{pause}, {selection}, {reminders},
+		{{Text: "😴 Uyanık kalma", Data: "cmd_awake"}},
 		{{Text: "📊 Sistem", Data: "cmd_stats"}, {Text: "🔄 Yeniden başlat", Data: "cmd_restart"}},
 		{{Text: "◀︎ Menü", Data: "cmd_menu"}},
 	})
+}
+
+// Awake uyanık kalma ekranıdır: bot ne zamana kadar uyanık, süre nasıl değişir.
+// chosen, kullanıcının seçtiği bir tarihin geçerli olduğunu söyler.
+func Awake(reason string, chosen bool) notify.Message {
+	const explain = "Uyanıkken notları düzenli kontrol eder ve komutlara cevap verir. Uyurken ikisini de yapmaz; Telegram mesajı onu uyandırmaz."
+	const howTo = "Tam tarih için /uyanik 20.12 yaz; takvime dönmek için /uyanik takvim."
+	keyboard := notify.Keyboard{
+		{{Text: "+1 hafta", Data: "cmd_awake_7"}, {Text: "+2 hafta", Data: "cmd_awake_14"}, {Text: "+1 ay", Data: "cmd_awake_30"}},
+		{{Text: "🌙 Bugün bitsin", Data: "cmd_awake_today"}},
+	}
+	if chosen {
+		keyboard = append(keyboard, []notify.Button{{Text: "📅 Takvime dön", Data: "cmd_awake_reset"}})
+	}
+	keyboard = append(keyboard, []notify.Button{{Text: "◀︎ Ayarlar", Data: "cmd_settings"}})
+	return notify.Message{
+		Rich:     "<p><b>😴 Uyanık kalma</b></p><p><b>" + esc(reason) + "</b></p><p>" + explain + "</p><footer>" + howTo + "</footer>",
+		Plain:    "<b>😴 Uyanık kalma</b>\n<b>" + esc(reason) + "</b>\n" + explain + "\n<i>" + howTo + "</i>",
+		Keyboard: keyboard,
+	}
 }
 
 // Stats çalışma zamanı bilgisidir.

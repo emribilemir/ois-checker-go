@@ -209,6 +209,9 @@ func TestStatusAndErrorMessages(t *testing.T) {
 	checkMessage(t, "stats", Stats(5*time.Minute, 42, now.Add(-26*time.Hour), now))
 	contains(t, "stats", Stats(5*time.Minute, 42, now.Add(-26*time.Hour), now).Rich, "<b>42</b>", "1 gün 2 sa")
 	checkMessage(t, "restart", Restarting())
+	awakeView := Awake("Senin seçimin: 22 Aralık'a kadar uyanık", true)
+	checkMessage(t, "awake", awakeView)
+	contains(t, "awake", awakeView.Rich, "22 Aralık'a kadar", "/uyanik 20.12")
 	checkMessage(t, "loading", Loading("📅 Ders Programı"))
 	checkMessage(t, "notice", Notice("a < b"))
 

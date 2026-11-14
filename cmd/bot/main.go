@@ -107,8 +107,13 @@ func main() {
 	if err := notify.SetCommands(cfg.TelegramToken, notify.Commands); err != nil {
 		log.Printf("Telegram komut menüsü ayarlanamadı: %v", err)
 	}
-	if err := notify.Send(cfg.TelegramToken, cfg.TelegramChatID, view.Started(currentStatus(cfg))); err != nil {
-		log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
+	// Uyanık kalınmayacak bir zamanda uyandırıldıysa (ör. saatlik GitHub işi, kısaltılmış
+	// dönem) sohbete her seferinde "bot başladı" yazma.
+	announceStart, _ := stayAwake(time.Now())
+	if announceStart {
+		if err := notify.Send(cfg.TelegramToken, cfg.TelegramChatID, view.Started(currentStatus(cfg))); err != nil {
+			log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
+		}
 	}
 
 	// Render bir Web Service'in PORT üzerinde dinlemesini bekler. Dışarıdan düzenli
@@ -147,7 +152,9 @@ func main() {
 		cachedCourses = courses
 		cacheMu.Unlock()
 		if !firstSuccessNotified {
-			sendInitialGrades(cfg, courses)
+			if announceStart {
+				sendInitialGrades(cfg, courses)
+			}
 			firstSuccessNotified = true
 		}
 	}
@@ -160,7 +167,9 @@ func main() {
 			cachedCourses = courses
 			cacheMu.Unlock()
 			if !firstSuccessNotified {
-				sendInitialGrades(cfg, courses)
+				if announceStart {
+					sendInitialGrades(cfg, courses)
+				}
 				firstSuccessNotified = true
 			}
 		}
@@ -399,7 +408,7 @@ func currentStatus(cfg *config.Config) view.Status {
 // currentSettings menüden değiştirilebilen ayarların şu anki halidir.
 func currentSettings() settings.Settings {
 	paused, active := controlState()
-	return settings.Settings{Paused: paused, CourseSelection: active, Reminders: remindersEnabled()}
+	return settings.Settings{Paused: paused, CourseSelection: active, Reminders: remindersEnabled(), AwakeUntil: chosenAwakeUntil()}
 }
 
 // applySettings sabit mesajdan okunan ayarları uygular.
@@ -415,6 +424,7 @@ func applySettings(saved settings.Settings, program *scheduleService) {
 		}
 	}
 	remindersActive.Store(saved.Reminders)
+	setChosenAwakeUntil(saved.AwakeUntil)
 }
 
 func controlState() (paused, courseSelectionActive bool) {

@@ -8,6 +8,7 @@ package settings
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"notbot/internal/notify"
 )
@@ -17,6 +18,9 @@ type Settings struct {
 	Paused          bool
 	CourseSelection bool
 	Reminders       bool
+	// AwakeUntil kullanıcının Telegram'dan seçtiği uyanık kalma sonudur (gün,
+	// dahil). Sıfırsa akademik takvim geçerlidir.
+	AwakeUntil time.Time
 }
 
 const (
@@ -24,6 +28,7 @@ const (
 	gradeLabel  = "Not taraması"
 	courseLabel = "Ders seçme takibi"
 	remindLabel = "Ders uyarıları"
+	awakePrefix = "⏰ Uyanık kalma sonu:"
 	footer      = "Bot ayarlarını bu sabit mesajda saklar; deploy sonrası buradan okur. Silersen varsayılanlara döner."
 	onMark      = "✅"
 	offMark     = "▫️"
@@ -37,14 +42,16 @@ func Encode(s Settings) string {
 		}
 		return offMark + " " + label
 	}
-	return strings.Join([]string{
+	lines := []string{
 		header,
 		line(!s.Paused, gradeLabel),
 		line(s.CourseSelection, courseLabel),
 		line(s.Reminders, remindLabel),
-		"",
-		footer,
-	}, "\n")
+	}
+	if !s.AwakeUntil.IsZero() {
+		lines = append(lines, awakePrefix+" "+s.AwakeUntil.Format("2006-01-02"))
+	}
+	return strings.Join(append(lines, "", footer), "\n")
 }
 
 // Decode Encode'un ürettiği metni çözer; metin botun ayar mesajı değilse ok=false.
@@ -56,6 +63,12 @@ func Decode(text string) (s Settings, ok bool) {
 	found := map[string]bool{}
 	for _, raw := range lines[1:] {
 		line := strings.TrimSpace(raw)
+		if rest, ok := strings.CutPrefix(line, awakePrefix); ok {
+			if d, err := time.Parse("2006-01-02", strings.TrimSpace(rest)); err == nil {
+				s.AwakeUntil = d
+			}
+			continue
+		}
 		on := strings.HasPrefix(line, onMark)
 		if !on && !strings.HasPrefix(line, offMark) {
 			continue

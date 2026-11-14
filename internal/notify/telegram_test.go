@@ -146,7 +146,7 @@ func TestCommandNameAcceptsMenuCommands(t *testing.T) {
 			t.Fatalf("commandName(%q) = %q, want %q", text, got, want)
 		}
 	}
-	for _, accepted := range []string{"/start", "/menu", "/notlar", "/program", "/sinav", "/sinavlar@NotBot", "/ayarlar"} {
+	for _, accepted := range []string{"/start", "/menu", "/notlar", "/program", "/sinav", "/sinavlar@NotBot", "/ayarlar", "/uyanik 20.12"} {
 		if !isCommand(accepted) {
 			t.Fatalf("%s must be accepted", accepted)
 		}

@@ -215,6 +215,7 @@ func AnswerCallback(token, callbackQueryID, text string) {
 // Update, poller'ın bota ilettiği tek komut ya da düğme basışıdır.
 type Update struct {
 	Command    string
+	Text       string // yazılan komutun tamamı (ör. "/uyanik 20.12"); düğmede boş
 	ChatID     string
 	CallbackID string
 	MessageID  int // düğme basışında düğmenin bulunduğu mesaj; yazılan komutta 0
@@ -282,7 +283,7 @@ func StartPoller(token string, handler func(Update)) {
 				offset = u.UpdateID + 1
 
 				if u.Message != nil && isCommand(u.Message.Text) {
-					handler(Update{Command: commandName(u.Message.Text), ChatID: fmt.Sprintf("%d", u.Message.Chat.ID)})
+					handler(Update{Command: commandName(u.Message.Text), Text: u.Message.Text, ChatID: fmt.Sprintf("%d", u.Message.Chat.ID)})
 				} else if u.CallbackQuery != nil && u.CallbackQuery.Message != nil {
 					handler(Update{
 						Command:    u.CallbackQuery.Data,
@@ -304,6 +305,7 @@ var Commands = []Command{
 	{"/program", "Haftalık ders programı"},
 	{"/sinav", "Sınav takvimi"},
 	{"/ayarlar", "Takip ve uyarı ayarları"},
+	{"/uyanik", "Uyanık kalma süresi (ör. /uyanik 20.12)"},
 }
 
 var aliases = map[string]bool{"/start": true, "/sinavlar": true}

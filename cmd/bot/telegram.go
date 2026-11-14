@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -171,6 +172,36 @@ func (b *bot) handle(u notify.Update) {
 		}
 		b.persist()
 
+	case "cmd_awake", "/uyanik":
+		if u.Command == "/uyanik" {
+			if arg := commandArg(u.Text); arg != "" {
+				b.chooseAwake(u, arg)
+				return
+			}
+		}
+		b.toast(u, "")
+		b.showAwake(u)
+
+	case "cmd_awake_7", "cmd_awake_14", "cmd_awake_30":
+		days := map[string]int{"cmd_awake_7": 7, "cmd_awake_14": 14, "cmd_awake_30": 30}[u.Command]
+		until := extendAwake(time.Now(), days)
+		setChosenAwakeUntil(until)
+		b.toast(u, view.UntilPhrase(until)+" uyanık")
+		b.showAwake(u)
+		b.persist()
+
+	case "cmd_awake_today":
+		setChosenAwakeUntil(dayOf(time.Now()))
+		b.toast(u, "Bugün sonunda uyuyacak")
+		b.showAwake(u)
+		b.persist()
+
+	case "cmd_awake_reset":
+		setChosenAwakeUntil(time.Time{})
+		b.toast(u, "Akademik takvime dönüldü")
+		b.showAwake(u)
+		b.persist()
+
 	case "cmd_stats":
 		b.toast(u, "")
 		b.reply(u, view.Stats(b.cfg.PollInterval, atomic.LoadInt64(&checkCount), processStartedAt, time.Now()))
@@ -189,4 +220,35 @@ func (b *bot) handle(u notify.Update) {
 		// Tanınmayan eski düğmeler: dönen simgeyi durdur.
 		b.toast(u, "")
 	}
+}
+
+func (b *bot) showAwake(u notify.Update) {
+	p := planAwake(time.Now())
+	b.reply(u, view.Awake(p.Reason, !chosenAwakeUntil().IsZero()))
+}
+
+// chooseAwake "/uyanik 20.12" ya da "/uyanik takvim" komutunu uygular.
+func (b *bot) chooseAwake(u notify.Update, arg string) {
+	switch strings.ToLower(arg) {
+	case "takvim", "sifirla", "sıfırla":
+		setChosenAwakeUntil(time.Time{})
+	default:
+		d, err := parseAwakeDate(arg, time.Now())
+		if err != nil {
+			b.reply(u, view.Notice("⚠️ "+err.Error()))
+			return
+		}
+		setChosenAwakeUntil(clampAwake(time.Now(), d))
+	}
+	b.showAwake(u)
+	b.persist()
+}
+
+// commandArg "/uyanik 20.12" metninden "20.12" kısmını döndürür.
+func commandArg(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		return ""
+	}
+	return strings.Join(fields[1:], " ")
 }
