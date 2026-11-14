@@ -674,7 +674,6 @@ var locatives = [...]string{"", "Ocak'ta", "Şubat'ta", "Mart'ta", "Nisan'da", "
 // OnDay "28 Aralık'ta" biçimidir.
 func OnDay(d time.Time) string { return fmt.Sprintf("%d %s", d.Day(), locatives[d.Month()]) }
 
-
 func clock(t time.Time) string { return t.In(Location).Format("15:04") }
 
 // stamp "13 Kasım 14:05" biçimidir.
