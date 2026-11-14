@@ -21,7 +21,7 @@ var (
 	// Telegram sendMessage HTML'inin kabul ettiği etiketler.
 	plainTags = map[string]bool{"b": true, "i": true, "u": true, "s": true, "a": true, "code": true, "pre": true, "blockquote": true, "tg-spoiler": true}
 	// Zengin mesajda kullandığımız etiketler (hepsi Bot API rich HTML listesinde).
-	richTags = map[string]bool{"p": true, "br": true, "b": true, "i": true, "s": true, "a": true, "mark": true,
+	richTags = map[string]bool{"p": true, "br": true, "b": true, "i": true, "s": true, "a": true,
 		"table": true, "tr": true, "th": true, "td": true, "details": true, "summary": true, "ul": true, "li": true, "input": true,
 		"footer": true, "blockquote": true}
 	voidTags = map[string]bool{"br": true, "input": true}
@@ -116,7 +116,7 @@ func TestGradeChangeAlert(t *testing.T) {
 		{Type: "score_change", CourseCode: "SEC101", CourseName: "Siber & Güvenlik", Component: "Vize", Weight: "%40", OldScore: "70", NewScore: "75"},
 	})
 	checkMessage(t, "grade change", m)
-	contains(t, "grade change rich", m.Rich, "🎉 Yeni notlar", "Siber &amp; Güvenlik", "<mark><b>85.00</b></mark>", "<s>70</s> → <mark><b>75</b></mark>")
+	contains(t, "grade change rich", m.Rich, "🎉 Yeni notlar", "Siber &amp; Güvenlik", "<b>85.00</b> 🆕", "<s>70</s> → <b>75</b>")
 	contains(t, "grade change plain", m.Plain, "Ödev <i>(%20)</i>  <b>85.00</b>", "<s>70</s> → <b>75</b>")
 	if m.Silent || len(m.Keyboard) != 1 || m.Keyboard[0][0].Data != "cmd_grades_new" {
 		t.Fatalf("grade alert must ring and offer the full list as a new message: %#v", m)

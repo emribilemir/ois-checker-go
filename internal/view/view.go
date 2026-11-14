@@ -328,10 +328,10 @@ func GradeChanges(changes []diff.Change) notify.Message {
 			var richScore, plainScore string
 			switch ch.Type {
 			case "new_score":
-				richScore = "<mark><b>" + esc(ch.NewScore) + "</b></mark>"
+				richScore = "<b>" + esc(ch.NewScore) + "</b> 🆕" // mark etiketi karanlık temada okunmuyordu (14 Kas ekran görüntüsü)
 				plainScore = "<b>" + esc(ch.NewScore) + "</b>"
 			case "score_change":
-				richScore = "<s>" + esc(ch.OldScore) + "</s> → <mark><b>" + esc(ch.NewScore) + "</b></mark>"
+				richScore = "<s>" + esc(ch.OldScore) + "</s> → <b>" + esc(ch.NewScore) + "</b>"
 				plainScore = "<s>" + esc(ch.OldScore) + "</s> → <b>" + esc(ch.NewScore) + "</b>"
 			default:
 				rich.WriteString("<p>🆕 Ders listeye eklendi</p>")
