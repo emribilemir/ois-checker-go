@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -31,5 +33,12 @@ func stayAwake(now time.Time) (bool, string) {
 
 // sleepNotice dönem bitip bot uykuya geçerken bir kez gönderilir.
 func sleepNotice(reason string) string {
-	return "😴 Uyanık kalma dönemi bitti. " + reason + ". Bu arada komutlara cevap vermeyebilir; ilk istek botu yaklaşık bir dakikada uyandırır."
+	return "😴 Uyanık kalma dönemi bitti. " + reason + ". Uyurken Telegram komutlarına cevap vermez; Telegram mesajı onu uyandırmaz. Arada lazım olursa botun adresini (" + publicURL() + ") tarayıcıda açmak yaklaşık bir dakikada uyandırır."
+}
+
+func publicURL() string {
+	if u := strings.TrimRight(os.Getenv("RENDER_EXTERNAL_URL"), "/"); u != "" {
+		return u
+	}
+	return "Render adresi"
 }
