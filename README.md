@@ -57,7 +57,7 @@ is a continuous process and intentionally does not exit after a single check.
 - **📝 Sınavlar** düğmesi veya `/sinav` komutu OİS'teki sınav takvimini getirir: bugünden sonraki sınavlar gün başlıklı bir tabloda saat, sınav türü ve derslikle listelenir; geçmiş sınavlar ve hoca / açıklama bilgisi açılır bölümdedir. Sayfa okunamazsa bot nereye baktığını ve ne gördüğünü yazar.
 - **⚙️ Ayarlar → Ders uyarılarını aç / kapat** düğmesi ders başlamadan 15 dakika önce gönderilen uyarıları yönetir. Uyarılar ilk kurulumda kapalıdır ve not taraması düğmesinden bağımsızdır. Açıkken program her 30 dakikada bir yenilenir ve uyarı saati dakikada bir kontrol edilir (Europe/Istanbul). OİS'ten program alınamazsa uyarılar son alınan programla sürer ve yeni deneme 5 dakika sonra yapılır.
 - Uyarı tercihi sabit ayar mesajında da tutulur, deploy sonrası korunur. Aynı ders için gönderilmiş uyarılar `STATE_FILE.schedule` dosyasındadır.
-- Free Render web services still require an external HTTP request at least once
-  every 15 minutes to avoid idle spin-down. A 5-10 minute uptime check is suitable.
+- Free Render web services spin down after 15 minutes without inbound HTTP traffic; Telegram and OIS polling are outbound and do not count. The bot therefore requests its own `RENDER_EXTERNAL_URL` every 10 minutes, so no external uptime pinger is needed. A service running all month uses about 720 of the 750 free instance hours per workspace.
+- Telegram updates that piled up while the bot was down (sleep or deploy) are skipped at startup, so old button presses are not applied hours later.
 - Render can restart a Free instance at any time. Toggles are restored from the pinned settings message after each restart.
 - `/data/state.json` is ephemeral on a free instance and can be lost on restart.

@@ -125,6 +125,8 @@ func main() {
 		}()
 	}
 
+	startKeepAlive(os.Getenv("RENDER_EXTERNAL_URL"), keepAliveEvery, &http.Client{Timeout: 30 * time.Second})
+
 	// Telegram komut ve düğme dinleyicisini arkaplanda başlat
 	b := &bot{cfg: cfg, client: client, program: program, store: store}
 	go notify.StartPoller(cfg.TelegramToken, b.handle)

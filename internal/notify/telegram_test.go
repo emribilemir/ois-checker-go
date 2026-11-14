@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -164,5 +165,25 @@ func TestNetworkErrorsDoNotLeakTheBotToken(t *testing.T) {
 	err := Send("123456:SECRET-TOKEN", "1", Message{Plain: "x"})
 	if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") || !strings.Contains(err.Error(), "connection refused") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSkipBacklogStartsAfterTheLastPendingUpdate(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		w.Write([]byte(`{"ok":true,"result":[{"update_id":4711}]}`))
+	}))
+	defer server.Close()
+	if got := skipBacklog(server.URL); got != 4712 || !strings.Contains(query, "offset=-1") {
+		t.Fatalf("offset=%d query=%q", got, query)
+	}
+
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"ok":true,"result":[]}`))
+	}))
+	defer empty.Close()
+	if got := skipBacklog(empty.URL); got != 0 {
+		t.Fatalf("no backlog must start at 0, got %d", got)
 	}
 }

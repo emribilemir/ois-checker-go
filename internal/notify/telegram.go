@@ -220,9 +220,32 @@ type Update struct {
 	MessageID  int // düğme basışında düğmenin bulunduğu mesaj; yazılan komutta 0
 }
 
+// skipBacklog bot kapalıyken birikmiş güncellemeleri atlar ve ilk okunacak
+// offset'i döndürür. Uyku ya da deploy sırasında basılmış düğmeler (ör. saatler
+// önce basılan bir ayar) bot açılınca işlenmesin diye kullanılır.
+func skipBacklog(endpoint string) int {
+	resp, err := telegramPollClient.Get(endpoint + "?offset=-1&timeout=0")
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	var last struct {
+		Ok     bool `json:"ok"`
+		Result []struct {
+			UpdateID int `json:"update_id"`
+		} `json:"result"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&last) != nil || !last.Ok || len(last.Result) == 0 {
+		return 0
+	}
+	telemetry.Note("telegram_backlog_skipped", "açılışta bekleyen eski komutlar atlandı")
+	log.Println("açılışta bekleyen eski Telegram komutları atlandı")
+	return last.Result[len(last.Result)-1].UpdateID + 1
+}
+
 func StartPoller(token string, handler func(Update)) {
-	var offset int
 	endpoint := fmt.Sprintf("%s/bot%s/getUpdates", apiBase, token)
+	offset := skipBacklog(endpoint)
 	for {
 		reqURL := fmt.Sprintf("%s?offset=%d&timeout=30", endpoint, offset)
 		resp, err := telegramPollClient.Get(reqURL)
