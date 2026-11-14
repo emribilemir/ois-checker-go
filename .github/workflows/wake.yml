@@ -1,0 +1,35 @@
+name: Botu uyandır
+
+# Render'ın ücretsiz servisi istek gelmezse uyur ve kendini uyandıramaz.
+# Bu iş saatte bir internal/awake/windows.txt'e bakar; bugün bir sınav, not ya da
+# ders kaydı dönemindeyse botun adresine istek atıp uyandırır. Dönem içinde bot
+# kendini 10 dakikada bir uyanık tutar; bu iş yalnız dönem başında uyandırmak içindir.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: internal/awake/windows.txt
+          sparse-checkout-cone-mode: false
+      - name: Dönem içindeyse botu uyandır
+        env:
+          BOT_URL: https://ois-checker-go.onrender.com/
+        run: |
+          today=$(TZ=Europe/Istanbul date +%F)
+          if awk -v d="$today" '!/^#/ && NF >= 2 && d >= $1 && d <= $2 { found = 1 } END { exit !found }' internal/awake/windows.txt; then
+            echo "Dönem içinde ($today), bot uyandırılıyor"
+            curl -fsS --retry 3 --retry-delay 20 --max-time 90 "$BOT_URL"; echo
+          else
+            echo "Dönem dışı ($today), uyandırılmadı"
+          fi

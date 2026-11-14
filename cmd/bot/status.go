@@ -29,6 +29,7 @@ func statusHandler(cfg *config.Config) http.Handler {
 			"now":              time.Now().UTC().Format(time.RFC3339),
 			"poll_interval":    cfg.PollInterval.String(),
 			"settings":         currentSettings(),
+			"awake":            awakeStatus(),
 			"last_check_at":    formatTime(checkedAt),
 			"last_check_error": telemetry.Scrub(lastErr),
 			"telemetry":        telemetry.Snapshot(),
@@ -46,4 +47,9 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func awakeStatus() map[string]any {
+	stay, reason := stayAwake(time.Now())
+	return map[string]any{"stay_awake": stay, "reason": reason}
 }

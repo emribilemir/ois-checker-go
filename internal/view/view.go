@@ -67,6 +67,7 @@ type Status struct {
 	LastCheck       time.Time
 	LastError       string
 	Now             time.Time
+	AwakeNote       string // botun ne zamana kadar uyanık kalacağı
 }
 
 func (s Status) items() []struct {
@@ -110,6 +111,10 @@ func statusMessage(title string, s Status, keyboard notify.Keyboard) notify.Mess
 	if s.LastError != "" {
 		rich.WriteString("<blockquote>⚠️ " + esc(s.LastError) + "</blockquote>")
 		plain.WriteString("<blockquote>⚠️ " + esc(s.LastError) + "</blockquote>\n")
+	}
+	if s.AwakeNote != "" {
+		rich.WriteString("<p>" + esc(s.AwakeNote) + "</p>")
+		plain.WriteString(esc(s.AwakeNote) + "\n")
 	}
 	rich.WriteString("<footer>" + esc(s.lastCheckText()) + "</footer>")
 	plain.WriteString("<i>" + esc(s.lastCheckText()) + "</i>")
@@ -656,6 +661,19 @@ func joinNonEmpty(sep string, values ...string) string {
 	}
 	return strings.Join(out, sep)
 }
+
+// datives ay adlarının "-e / -a" halidir: "15 Aralık'a", "10 Eylül'e".
+var datives = [...]string{"", "Ocak'a", "Şubat'a", "Mart'a", "Nisan'a", "Mayıs'a", "Haziran'a", "Temmuz'a", "Ağustos'a", "Eylül'e", "Ekim'e", "Kasım'a", "Aralık'a"}
+
+// UntilPhrase "15 Aralık'a kadar" biçimidir.
+func UntilPhrase(d time.Time) string { return fmt.Sprintf("%d %s kadar", d.Day(), datives[d.Month()]) }
+
+// locatives ay adlarının "-de / -da / -te / -ta" halidir: "28 Aralık'ta".
+var locatives = [...]string{"", "Ocak'ta", "Şubat'ta", "Mart'ta", "Nisan'da", "Mayıs'ta", "Haziran'da", "Temmuz'da", "Ağustos'ta", "Eylül'de", "Ekim'de", "Kasım'da", "Aralık'ta"}
+
+// OnDay "28 Aralık'ta" biçimidir.
+func OnDay(d time.Time) string { return fmt.Sprintf("%d %s", d.Day(), locatives[d.Month()]) }
+
 
 func clock(t time.Time) string { return t.In(Location).Format("15:04") }
 

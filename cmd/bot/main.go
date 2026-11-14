@@ -125,7 +125,11 @@ func main() {
 		}()
 	}
 
-	startKeepAlive(os.Getenv("RENDER_EXTERNAL_URL"), keepAliveEvery, &http.Client{Timeout: 30 * time.Second})
+	startKeepAlive(os.Getenv("RENDER_EXTERNAL_URL"), keepAliveEvery, &http.Client{Timeout: 30 * time.Second}, stayAwake, func(reason string) {
+		if err := notify.Send(cfg.TelegramToken, cfg.TelegramChatID, view.Notice(sleepNotice(reason))); err != nil {
+			log.Printf("uyku bildirimi gönderilemedi: %v", err)
+		}
+	})
 
 	// Telegram komut ve düğme dinleyicisini arkaplanda başlat
 	b := &bot{cfg: cfg, client: client, program: program, store: store}
@@ -384,9 +388,11 @@ func currentStatus(cfg *config.Config) view.Status {
 	paused, active := controlState()
 	statusMu.RLock()
 	defer statusMu.RUnlock()
+	_, awakeNote := stayAwake(time.Now())
 	return view.Status{
 		Paused: paused, CourseSelection: active, Reminders: remindersEnabled(),
 		Interval: cfg.PollInterval, LastCheck: lastCheckAt, LastError: lastCheckError, Now: time.Now(),
+		AwakeNote: awakeNote,
 	}
 }
 
@@ -433,6 +439,8 @@ func runDersSecmeCheck(client *http.Client, cfg *config.Config) (expired bool) {
 		log.Printf("ders seçme kontrol hata: %v", err)
 		return isSessionExpired(err)
 	}
+
+	courseSelectionOpen.Store(status.Open)
 
 	if status.Open && !notified {
 		msg := view.CourseSelectionOpened(status.Signal, status.SelectedCourses, cfg.UniversityURL, time.Now())

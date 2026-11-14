@@ -17,8 +17,11 @@ const keepAliveEvery = 10 * time.Minute
 // servisi 15 dakika dışarıdan HTTP isteği almazsa uyutur; Telegram ve OİS
 // yoklamaları dışarıya giden istek olduğu için uyanık tutmaz. Adres, Render'ın
 // verdiği RENDER_EXTERNAL_URL'dir; yerelde boş olduğu için hiçbir şey yapmaz.
-// Dönen fonksiyon döngüyü durdurur (testler için).
-func startKeepAlive(baseURL string, every time.Duration, client *http.Client) (stop func()) {
+//
+// wanted her turda uyanık kalınıp kalınmayacağını söyler; false ise istek
+// atılmaz ve Render servisi uyutur. onSleep, uyanık dönemden uykuya geçerken
+// bir kez çağrılır. Dönen fonksiyon döngüyü durdurur (testler için).
+func startKeepAlive(baseURL string, every time.Duration, client *http.Client, wanted func(time.Time) (bool, string), onSleep func(reason string)) (stop func()) {
 	if baseURL == "" {
 		return func() {}
 	}
@@ -27,12 +30,20 @@ func startKeepAlive(baseURL string, every time.Duration, client *http.Client) (s
 	go func() {
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
+		wasAwake := true
 		for {
 			select {
 			case <-done:
 				return
-			case <-ticker.C:
-				pingOnce(client, target)
+			case now := <-ticker.C:
+				awake, reason := wanted(now)
+				telemetry.Set("awake", reason)
+				if awake {
+					pingOnce(client, target)
+				} else if wasAwake && onSleep != nil {
+					onSleep(reason)
+				}
+				wasAwake = awake
 			}
 		}
 	}()

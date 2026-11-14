@@ -1,0 +1,7 @@
+# Botun uyanık kalacağı dönemler. Biçim: başlangıç bitiş açıklama
+# Tarihler İstanbul saatiyle, iki uç dahil. Kaynak: Atlas 2026-2027 önlisans/lisans
+# akademik takvimi (https://www.atlas.edu.tr/akademik-takvim).
+# Bu dosyayı GitHub Actions'taki uyandırma işi de okur (.github/workflows/wake.yml).
+2026-11-07 2026-12-15 Güz ara sınavları ve notlar
+2026-12-28 2027-02-08 Güz finali, bütünleme, tek ders ve notlar
+2027-01-18 2027-02-07 Bahar ders kaydı ve ekle/bırak
