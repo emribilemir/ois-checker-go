@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"notbot/internal/telemetry"
@@ -16,18 +17,27 @@ const keepAliveEvery = 10 * time.Minute
 // servisi 15 dakika dışarıdan HTTP isteği almazsa uyutur; Telegram ve OİS
 // yoklamaları dışarıya giden istek olduğu için uyanık tutmaz. Adres, Render'ın
 // verdiği RENDER_EXTERNAL_URL'dir; yerelde boş olduğu için hiçbir şey yapmaz.
-func startKeepAlive(baseURL string, every time.Duration, client *http.Client) {
+// Dönen fonksiyon döngüyü durdurur (testler için).
+func startKeepAlive(baseURL string, every time.Duration, client *http.Client) (stop func()) {
 	if baseURL == "" {
-		return
+		return func() {}
 	}
 	target := strings.TrimRight(baseURL, "/") + "/"
+	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
-		for range ticker.C {
-			pingOnce(client, target)
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				pingOnce(client, target)
+			}
 		}
 	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 func pingOnce(client *http.Client, target string) {
