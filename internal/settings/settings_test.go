@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -50,9 +51,10 @@ func fakeTelegram(t *testing.T, pinnedID int, pinnedText string, failing map[str
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
 	until := time.Date(2026, 12, 22, 0, 0, 0, 0, time.UTC)
-	for _, s := range []Settings{{}, {Paused: true}, {CourseSelection: true, Reminders: true}, {Paused: true, CourseSelection: true, Reminders: true}, {AwakeUntil: until}} {
+	alive := time.Date(2026, 11, 16, 21, 30, 0, 0, time.UTC)
+	for _, s := range []Settings{{}, {Paused: true}, {CourseSelection: true, Reminders: true}, {Paused: true, CourseSelection: true, Reminders: true}, {AwakeUntil: until}, {GradeMarks: []string{"a1b2c3", "d4e5f6"}, LastAlive: alive}} {
 		got, ok := Decode(Encode(s))
-		if !ok || got != s {
+		if !ok || !reflect.DeepEqual(got, s) {
 			t.Fatalf("round trip %+v -> %+v ok=%v\n%s", s, got, ok, Encode(s))
 		}
 	}
@@ -74,7 +76,7 @@ func TestLoadReadsThePinnedSettingsMessage(t *testing.T) {
 	calls := fakeTelegram(t, 41, Encode(want), nil)
 	st := &Store{Token: "t", ChatID: "123"}
 	got, ok, err := st.Load()
-	if err != nil || !ok || got != want {
+	if err != nil || !ok || !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v ok=%v err=%v", got, ok, err)
 	}
 	if err := st.Save(Settings{CourseSelection: true}); err != nil {

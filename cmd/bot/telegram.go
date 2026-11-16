@@ -60,6 +60,7 @@ func (b *bot) settings(u notify.Update, toast string) {
 }
 
 func (b *bot) handle(u notify.Update) {
+	defer recoverPanic("telegram " + u.Command)
 	// Sadece yapılandırılmış sohbete cevap ver
 	if u.ChatID != b.cfg.TelegramChatID {
 		return
@@ -98,6 +99,7 @@ func (b *bot) handle(u notify.Update) {
 			b.reply(u, view.Loading("📅 Ders Programı"))
 		}
 		go func() {
+			defer recoverPanic("ders programı")
 			entries, err := b.program.Show()
 			if err != nil {
 				log.Printf("ders programı alınamadı: %v", err)
@@ -114,6 +116,7 @@ func (b *bot) handle(u notify.Update) {
 			b.reply(u, view.Loading("📝 Sınav Takvimi"))
 		}
 		go func() {
+			defer recoverPanic("sınav takvimi")
 			list, err := fetchExamCalendar(b.client, b.cfg)
 			if err != nil {
 				log.Printf("sınav takvimi alınamadı: %v", err)

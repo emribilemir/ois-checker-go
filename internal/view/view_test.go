@@ -202,10 +202,6 @@ func TestCourseSelectionMessages(t *testing.T) {
 }
 
 func TestStatusAndErrorMessages(t *testing.T) {
-	checkMessage(t, "started", Started(Status{Interval: time.Minute, Now: now}))
-	if !Started(Status{Now: now}).Silent {
-		t.Fatal("startup message must be silent")
-	}
 	checkMessage(t, "stats", Stats(5*time.Minute, 42, now.Add(-26*time.Hour), now))
 	contains(t, "stats", Stats(5*time.Minute, 42, now.Add(-26*time.Hour), now).Rich, "<b>42</b>", "1 gün 2 sa")
 	checkMessage(t, "restart", Restarting())

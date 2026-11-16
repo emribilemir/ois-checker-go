@@ -21,6 +21,11 @@ type Settings struct {
 	// AwakeUntil kullanıcının Telegram'dan seçtiği uyanık kalma sonudur (gün,
 	// dahil). Sıfırsa akademik takvim geçerlidir.
 	AwakeUntil time.Time
+	// GradeMarks botun bildiği yayınlanmış notların kısa izleridir; bot kapalıyken
+	// açıklanan notları açılışta bulmak için. Not ya da ders adı içermez.
+	GradeMarks []string
+	// LastAlive botun en son çalıştığı andır (UTC); açılışta ne kadar kapalı kaldığını gösterir.
+	LastAlive time.Time
 }
 
 const (
@@ -29,6 +34,8 @@ const (
 	courseLabel = "Ders seçme takibi"
 	remindLabel = "Ders uyarıları"
 	awakePrefix = "⏰ Uyanık kalma sonu:"
+	marksPrefix = "🧾 Not izi:"
+	alivePrefix = "🕒 Son çalışma:"
 	footer      = "Bot ayarlarını bu sabit mesajda saklar; deploy sonrası buradan okur. Silersen varsayılanlara döner."
 	onMark      = "✅"
 	offMark     = "▫️"
@@ -51,6 +58,12 @@ func Encode(s Settings) string {
 	if !s.AwakeUntil.IsZero() {
 		lines = append(lines, awakePrefix+" "+s.AwakeUntil.Format("2006-01-02"))
 	}
+	if len(s.GradeMarks) > 0 {
+		lines = append(lines, marksPrefix+" "+strings.Join(s.GradeMarks, " "))
+	}
+	if !s.LastAlive.IsZero() {
+		lines = append(lines, alivePrefix+" "+s.LastAlive.UTC().Format(time.RFC3339))
+	}
 	return strings.Join(append(lines, "", footer), "\n")
 }
 
@@ -63,6 +76,16 @@ func Decode(text string) (s Settings, ok bool) {
 	found := map[string]bool{}
 	for _, raw := range lines[1:] {
 		line := strings.TrimSpace(raw)
+		if rest, ok := strings.CutPrefix(line, marksPrefix); ok {
+			s.GradeMarks = strings.Fields(rest)
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, alivePrefix); ok {
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(rest)); err == nil {
+				s.LastAlive = t
+			}
+			continue
+		}
 		if rest, ok := strings.CutPrefix(line, awakePrefix); ok {
 			if d, err := time.Parse("2006-01-02", strings.TrimSpace(rest)); err == nil {
 				s.AwakeUntil = d

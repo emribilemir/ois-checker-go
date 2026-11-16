@@ -126,13 +126,6 @@ func Menu(s Status) notify.Message {
 	return statusMessage("🎓 OİS Bot", s, MainMenu())
 }
 
-// Started bot her açıldığında sessizce gönderilir.
-func Started(s Status) notify.Message {
-	m := statusMessage("🤖 Bot başladı", s, MainMenu())
-	m.Silent = true
-	return m
-}
-
 // Settings takip ve uyarı ayarlarıdır; düğmeler durumu tersine çevirir.
 func Settings(s Status) notify.Message {
 	pause := notify.Button{Text: "⏸ Not taramasını durdur", Data: "cmd_pause"}

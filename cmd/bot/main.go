@@ -72,15 +72,17 @@ func main() {
 	}
 	view.Location = location
 	go func() {
-		if err := program.Check(time.Now().In(location)); err != nil {
-			log.Printf("ders uyarı ilk kontrolü başarısız: %v", err)
-		}
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
+		checkReminders := func() {
+			defer recoverPanic("ders uyarısı")
 			if err := program.Check(time.Now().In(location)); err != nil {
 				log.Printf("ders uyarı kontrolü başarısız: %v", err)
 			}
+		}
+		checkReminders()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			checkReminders()
 		}
 	}()
 
@@ -92,13 +94,16 @@ func main() {
 	telemetry.Note("start", "sürüm "+commit)
 
 	store := &settings.Store{Token: cfg.TelegramToken, ChatID: cfg.TelegramChatID}
+	settingsStore = store
 	if saved, ok, err := store.Load(); err != nil {
 		log.Printf("ayarlar Telegram'dan okunamadı, varsayılanlar kullanılıyor: %v", err)
 		telemetry.Note("settings", "okunamadı: "+err.Error())
 	} else if ok {
 		applySettings(saved, program)
-		log.Printf("ayarlar sabit mesajdan yüklendi: %+v", saved)
-		telemetry.Note("settings", fmt.Sprintf("sabit mesajdan yüklendi: %+v", saved))
+		log.Printf("ayarlar sabit mesajdan yüklendi (%d not izi)", len(saved.GradeMarks))
+		telemetry.Note("settings", fmt.Sprintf("sabit mesajdan yüklendi: not taraması durdu=%v, ders seçme=%v, uyarılar=%v, %d not izi",
+			saved.Paused, saved.CourseSelection, saved.Reminders, len(saved.GradeMarks)))
+		noteRestart(saved.LastAlive, time.Now())
 	} else {
 		telemetry.Note("settings", "sabit ayar mesajı yok, varsayılanlar")
 		log.Println("sabit ayar mesajı yok; ilk değişiklikte oluşturulacak")
@@ -107,14 +112,9 @@ func main() {
 	if err := notify.SetCommands(cfg.TelegramToken, notify.Commands); err != nil {
 		log.Printf("Telegram komut menüsü ayarlanamadı: %v", err)
 	}
-	// Uyanık kalınmayacak bir zamanda uyandırıldıysa (ör. saatlik GitHub işi, kısaltılmış
-	// dönem) sohbete her seferinde "bot başladı" yazma.
-	announceStart, _ := stayAwake(time.Now())
-	if announceStart {
-		if err := notify.Send(cfg.TelegramToken, cfg.TelegramChatID, view.Started(currentStatus(cfg))); err != nil {
-			log.Printf("Başlangıç Telegram mesajı hatası: %v", err)
-		}
-	}
+	// Açılışta sohbete mesaj yazılmaz: Render ücretsiz örneği sık yeniden başlatıyor
+	// ve her açılışta gelen not listesi yeni not bildirimi sanılıyordu (Emir, 16 Kas).
+	// Bot kapalıyken açıklanan notlar not izleriyle bulunup "Yeni not" olarak gelir.
 
 	// Render bir Web Service'in PORT üzerinde dinlemesini bekler. Dışarıdan düzenli
 	// ping almak ücretsiz servisin uyumasını önler; tarama döngüsü kilitlenirse bu
@@ -143,36 +143,23 @@ func main() {
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
-	firstSuccessNotified := false
-
-	// İlk döngü
-	courses, success := run(client, cfg)
-	if success && courses != nil {
-		cacheMu.Lock()
-		cachedCourses = courses
-		cacheMu.Unlock()
-		if !firstSuccessNotified {
-			if announceStart {
-				sendInitialGrades(cfg, courses)
-			}
-			firstSuccessNotified = true
-		}
-	}
-
-	// Rutin döngü
-	for range ticker.C {
+	cycle := func() {
+		defer recoverPanic("tur")
 		courses, success := run(client, cfg)
 		if success && courses != nil {
 			cacheMu.Lock()
 			cachedCourses = courses
 			cacheMu.Unlock()
-			if !firstSuccessNotified {
-				if announceStart {
-					sendInitialGrades(cfg, courses)
-				}
-				firstSuccessNotified = true
-			}
 		}
+		heartbeat(time.Now())
+	}
+
+	// İlk döngü
+	cycle()
+
+	// Rutin döngü
+	for range ticker.C {
+		cycle()
 
 		// Her kontrol bittikten sonra RAM'deki çöpü (Garbage Collector)
 		// agresif olarak temizleyip işletim sistemine iade et
@@ -207,14 +194,6 @@ func healthHandler(pollInterval time.Duration) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OIS Bot is fully awake and running!"))
 	})
-}
-
-func sendInitialGrades(cfg *config.Config, courses []scraper.Course) {
-	message := view.Grades(courses, "OİS'e giriş yapıldı, takip sürüyor", time.Now())
-	message.Silent = true
-	if err := notify.Send(cfg.TelegramToken, cfg.TelegramChatID, message); err != nil {
-		log.Printf("İlk not durumu Telegram gönderim hatası: %v", err)
-	}
 }
 
 func run(client *http.Client, cfg *config.Config) ([]scraper.Course, bool) {
@@ -344,13 +323,28 @@ func runCycle(client *http.Client, cfg *config.Config) ([]scraper.Course, bool, 
 	}
 	log.Printf("%d ders bulundu", len(courses))
 
-	// Diff
+	// Diff. Disk yeni başlatmada silindiyse önceki durum dosyası yoktur; o zaman
+	// bot kapalıyken açıklanan notlar sabit mesajdaki izlerle bulunur.
+	freshDisk := false
+	if cfg.StateFile != "" {
+		_, statErr := os.Stat(cfg.StateFile)
+		freshDisk = os.IsNotExist(statErr)
+	}
 	changed, changes, err := diff.Check(courses, cfg.StateFile)
 	if err != nil {
 		recordCheckFailure(err.Error())
 		log.Printf("diff hata: %v", err)
 		return nil, false, false
 	}
+	if freshDisk {
+		if missed := missedChanges(courses, storedMarks()); len(missed) > 0 {
+			log.Printf("bot kapalıyken açıklanmış %d not bulundu", len(missed))
+			telemetry.Note("missed_grades", fmt.Sprintf("kapalıyken açıklanmış %d not öğesi bildirildi", len(missed)))
+			changed, changes = true, missed
+		}
+	}
+	telemetry.Set("grades_seen", fmt.Sprintf("%d ders, %d not öğesi", len(courses), len(gradeItems(courses))))
+	rememberGrades(courses)
 	if !changed {
 		recordCheckSuccess()
 		log.Println("değişiklik yok")
@@ -408,7 +402,11 @@ func currentStatus(cfg *config.Config) view.Status {
 // currentSettings menüden değiştirilebilen ayarların şu anki halidir.
 func currentSettings() settings.Settings {
 	paused, active := controlState()
-	return settings.Settings{Paused: paused, CourseSelection: active, Reminders: remindersEnabled(), AwakeUntil: chosenAwakeUntil()}
+	continuityMu.Lock()
+	marks, alive := append([]string(nil), knownMarks...), lastAlive
+	continuityMu.Unlock()
+	return settings.Settings{Paused: paused, CourseSelection: active, Reminders: remindersEnabled(), AwakeUntil: chosenAwakeUntil(),
+		GradeMarks: marks, LastAlive: alive}
 }
 
 // applySettings sabit mesajdan okunan ayarları uygular.
@@ -417,6 +415,10 @@ func applySettings(saved settings.Settings, program *scheduleService) {
 	isPaused = saved.Paused
 	isDersSecmeActive = saved.CourseSelection
 	cacheMu.Unlock()
+	setChosenAwakeUntil(saved.AwakeUntil)
+	continuityMu.Lock()
+	knownMarks, lastAlive = append([]string(nil), saved.GradeMarks...), saved.LastAlive
+	continuityMu.Unlock()
 	if program != nil && program.Enabled() != saved.Reminders {
 		if err := program.SetEnabled(saved.Reminders); err != nil {
 			log.Printf("ders uyarı tercihi uygulanamadı: %v", err)
@@ -424,7 +426,6 @@ func applySettings(saved settings.Settings, program *scheduleService) {
 		}
 	}
 	remindersActive.Store(saved.Reminders)
-	setChosenAwakeUntil(saved.AwakeUntil)
 }
 
 func controlState() (paused, courseSelectionActive bool) {
