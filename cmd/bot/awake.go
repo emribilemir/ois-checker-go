@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"notbot/internal/awake"
+	"notbot/internal/telemetry"
+	"notbot/internal/uptime"
 	"notbot/internal/view"
 )
 
@@ -147,4 +150,30 @@ func publicURL() string {
 		return u
 	}
 	return "Render adresi"
+}
+
+// syncUptimeRobot UptimeRobot izlemesini uyanık kalma planına uydurur: uyanık
+// kalınacaksa açık, değilse duraklatılmış. Duraklatılınca istek gelmez ve
+// Render botu uyutur; dönem başında GitHub işi botu uyandırınca izleme açılır.
+func syncUptimeRobot(robot *uptime.Client, awake bool) {
+	if !robot.Enabled() {
+		telemetry.Set("uptimerobot", "eşitleme kapalı (UPTIMEROBOT_API_KEY yok)")
+		return
+	}
+	changed, err := robot.Ensure(awake)
+	if err != nil {
+		telemetry.Inc("uptimerobot_error")
+		telemetry.Note("uptimerobot_error", err.Error())
+		log.Printf("UptimeRobot eşitlenemedi: %v", err)
+		return
+	}
+	state := "açık"
+	if !awake {
+		state = "duraklatıldı"
+	}
+	telemetry.Set("uptimerobot", state)
+	if changed {
+		telemetry.Note("uptimerobot", "izleme "+state)
+		log.Printf("UptimeRobot izlemesi %s", state)
+	}
 }

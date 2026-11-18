@@ -22,6 +22,7 @@ import (
 	"notbot/internal/session"
 	"notbot/internal/settings"
 	"notbot/internal/telemetry"
+	"notbot/internal/uptime"
 	"notbot/internal/view"
 )
 
@@ -130,7 +131,16 @@ func main() {
 		}()
 	}
 
-	startKeepAlive(os.Getenv("RENDER_EXTERNAL_URL"), keepAliveEvery, &http.Client{Timeout: 30 * time.Second}, stayAwake, func(reason string) {
+	robot := &uptime.Client{
+		APIKey:     os.Getenv("UPTIMEROBOT_API_KEY"),
+		MonitorURL: strings.TrimRight(os.Getenv("RENDER_EXTERNAL_URL"), "/") + "/",
+	}
+	wanted := func(now time.Time) (bool, string) {
+		awake, reason := stayAwake(now)
+		syncUptimeRobot(robot, awake)
+		return awake, reason
+	}
+	startKeepAlive(os.Getenv("RENDER_EXTERNAL_URL"), keepAliveEvery, &http.Client{Timeout: 30 * time.Second}, wanted, func(reason string) {
 		if err := notify.Send(cfg.TelegramToken, cfg.TelegramChatID, view.Notice(sleepNotice(reason))); err != nil {
 			log.Printf("uyku bildirimi gönderilemedi: %v", err)
 		}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,8 @@ import (
 	"notbot/config"
 	"notbot/internal/notify"
 	"notbot/internal/settings"
+	"notbot/internal/telemetry"
+	"notbot/internal/uptime"
 	"notbot/internal/view"
 )
 
@@ -159,5 +163,37 @@ func TestAwakeButtonsAndCommandPersistTheChoice(t *testing.T) {
 	b.handle(notify.Update{Command: "/uyanik", Text: "/uyanik 31.02", ChatID: "123"})
 	if len(*calls) == 0 || !strings.Contains((*calls)[0].body, "böyle bir gün yok") {
 		t.Fatalf("bad date must be explained: %#v", *calls)
+	}
+}
+
+func TestSyncUptimeRobotFollowsTheAwakePlan(t *testing.T) {
+	telemetry.Reset()
+	var edits []string
+	status := "2"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if strings.HasSuffix(r.URL.Path, "/editMonitor") {
+			edits = append(edits, r.Form.Get("status"))
+			status = map[string]string{"0": "0", "1": "2"}[r.Form.Get("status")]
+			w.Write([]byte(`{"stat":"ok","monitor":{"id":7}}`))
+			return
+		}
+		w.Write([]byte(`{"stat":"ok","monitors":[{"id":7,"url":"https://ois-checker-go.onrender.com/","status":` + status + `}]}`))
+	}))
+	defer srv.Close()
+	robot := &uptime.Client{APIKey: "k", MonitorURL: "https://ois-checker-go.onrender.com/", Base: srv.URL, HTTP: srv.Client()}
+
+	syncUptimeRobot(robot, false)
+	syncUptimeRobot(robot, false)
+	syncUptimeRobot(robot, true)
+	if strings.Join(edits, ",") != "0,1" {
+		t.Fatalf("expected one pause then one resume, got %v", edits)
+	}
+	if v := telemetry.Snapshot()["values"].(map[string]string)["uptimerobot"]; v != "açık" {
+		t.Fatalf("status value %q", v)
+	}
+	syncUptimeRobot(&uptime.Client{}, false)
+	if v := telemetry.Snapshot()["values"].(map[string]string)["uptimerobot"]; !strings.Contains(v, "eşitleme kapalı") {
+		t.Fatalf("missing key must be visible on /status: %q", v)
 	}
 }
