@@ -1,13 +1,15 @@
 name: Botu uyandır
 
 # Render'ın ücretsiz servisi istek gelmezse uyur ve kendini uyandıramaz.
-# Bu iş saatte bir internal/awake/windows.txt'e bakar; bugün bir sınav, not ya da
+# Bu iş 5 dakikada bir internal/awake/windows.txt'e bakar (GitHub zamanlanmış
+# işleri seyreltir: saatlik ayar 4 günde 14 kez çalıştı, bu yüzden en sık aralık); bugün bir sınav, not ya da
 # ders kaydı dönemindeyse botun adresine istek atıp uyandırır. Dönem içinde bot
-# kendini 10 dakikada bir uyanık tutar; bu iş yalnız dönem başında uyandırmak içindir.
+# kendini 5 dakikada bir uyanık tutar; bu iş, dönem başında ve Render örneği
+# durdurduğunda botu yeniden kaldırmak içindir.
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:

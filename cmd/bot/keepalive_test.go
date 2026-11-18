@@ -76,3 +76,22 @@ func TestKeepAliveStopsPingingOutsideWindowsAndAnnouncesSleepOnce(t *testing.T) 
 		t.Fatal("sleep announced more than once")
 	}
 }
+
+func TestKeepAliveRetriesAFailedPing(t *testing.T) {
+	telemetry.Reset()
+	previousDelay := keepAliveRetryDelay
+	keepAliveRetryDelay = time.Millisecond
+	t.Cleanup(func() { keepAliveRetryDelay = previousDelay })
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "geçici", http.StatusBadGateway)
+		}
+	}))
+	defer server.Close()
+	pingOnce(server.Client(), server.URL+"/")
+	counters := telemetry.Snapshot()["counters"].(map[string]int64)
+	if calls.Load() != 2 || counters["keepalive_error"] != 1 || counters["keepalive_ok"] != 1 {
+		t.Fatalf("expected one failure then a successful retry, calls=%d counters=%v", calls.Load(), counters)
+	}
+}

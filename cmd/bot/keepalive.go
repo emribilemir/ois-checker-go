@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -10,8 +11,15 @@ import (
 	"notbot/internal/telemetry"
 )
 
-// keepAliveEvery Render'ın ücretsiz servisi uyutma süresinden (15 dk) kısa olmalı.
-const keepAliveEvery = 10 * time.Minute
+// keepAliveEvery Render'ın ücretsiz servisi uyutma süresinden (15 dk) çok kısa
+// olmalı: bir istek aksasa bile sıradaki iki istek 15 dakikayı doldurmadan gider.
+const keepAliveEvery = 5 * time.Minute
+
+// keepAliveRetries ve keepAliveRetryDelay başarısız isteğin hemen tekrarıdır.
+var (
+	keepAliveRetries    = 2
+	keepAliveRetryDelay = 15 * time.Second
+)
 
 // startKeepAlive botun kendi dış adresine düzenli istek atar. Render ücretsiz
 // servisi 15 dakika dışarıdan HTTP isteği almazsa uyutur; Telegram ve OİS
@@ -53,13 +61,22 @@ func startKeepAlive(baseURL string, every time.Duration, client *http.Client, wa
 }
 
 func pingOnce(client *http.Client, target string) {
-	resp, err := client.Get(target)
-	if err != nil {
+	for attempt := 0; ; attempt++ {
+		resp, err := client.Get(target)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode < 500 {
+				telemetry.Inc("keepalive_ok")
+				return
+			}
+			err = fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
 		telemetry.Inc("keepalive_error")
-		telemetry.Note("keepalive_error", "ağ hatası")
-		log.Printf("uyanık tutma isteği başarısız: %v", err)
-		return
+		telemetry.Note("keepalive_error", fmt.Sprintf("deneme %d: %v", attempt+1, err))
+		log.Printf("uyanık tutma isteği başarısız (deneme %d): %v", attempt+1, err)
+		if attempt >= keepAliveRetries {
+			return
+		}
+		time.Sleep(keepAliveRetryDelay)
 	}
-	resp.Body.Close()
-	telemetry.Inc("keepalive_ok")
 }
