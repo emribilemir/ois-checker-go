@@ -720,3 +720,18 @@ func TestStatusEndpointIsJSONWithoutPersonalNumbers(t *testing.T) {
 		t.Fatalf("unexpected status body:\n%s", text)
 	}
 }
+
+func TestHealthHitsAreCountedBySource(t *testing.T) {
+	telemetry.Reset()
+	for _, ua := range []string{"Mozilla/5.0+(compatible; UptimeRobot/2.0; http://www.uptimerobot.com/)", "Go-http-client/1.1", "curl/8.5.0", "Mozilla/5.0"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("User-Agent", ua)
+		healthHandler(time.Minute).ServeHTTP(httptest.NewRecorder(), req)
+	}
+	counters := telemetry.Snapshot()["counters"].(map[string]int64)
+	for _, k := range []string{"health_hit_uptimerobot", "health_hit_self", "health_hit_curl", "health_hit_other"} {
+		if counters[k] != 1 {
+			t.Fatalf("%s = %d, counters %v", k, counters[k], counters)
+		}
+	}
+}

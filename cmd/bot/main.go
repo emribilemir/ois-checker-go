@@ -169,6 +169,22 @@ func main() {
 	}
 }
 
+// countHealthHit sağlık adresine gelen isteği kaynağına göre sayar; UptimeRobot,
+// botun kendi uyanık tutma isteği ve GitHub işi /status'ta ayrı görünsün.
+func countHealthHit(userAgent string, now time.Time) {
+	source := "other"
+	switch ua := strings.ToLower(userAgent); {
+	case strings.Contains(ua, "uptimerobot"):
+		source = "uptimerobot"
+	case strings.HasPrefix(ua, "go-http-client"):
+		source = "self"
+	case strings.HasPrefix(ua, "curl"):
+		source = "curl"
+	}
+	telemetry.Inc("health_hit_" + source)
+	telemetry.Set("health_last_"+source, now.In(view.Location).Format("02.01 15:04"))
+}
+
 // staleThreshold, uzun kontrol aralıklarında sağlıklı bir döngünün iki tur
 // arasında 503 almasını önler.
 func staleThreshold(pollInterval time.Duration) time.Duration {
@@ -181,6 +197,7 @@ func staleThreshold(pollInterval time.Duration) time.Duration {
 func healthHandler(pollInterval time.Duration) http.Handler {
 	staleAfter := staleThreshold(pollInterval)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		countHealthHit(r.UserAgent(), time.Now())
 		statusMu.RLock()
 		checkedAt := lastCheckAt
 		statusMu.RUnlock()
